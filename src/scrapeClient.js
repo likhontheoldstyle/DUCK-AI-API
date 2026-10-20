@@ -174,17 +174,26 @@ export function parseSSE(text) {
   return out;
 }
 
-export async function chatViaScrape({ message, messages, model }) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function chatAttempt({ msgs, modelId, fe }) {
   const startedAt = Date.now();
   const journeyId = newJourneyId();
-  const fe = await scrapeVersions();
   const { jsa } = await getChallenge(fe, journeyId);
-  const modelId = MODEL_IDS[model] || model || MODEL_IDS.Luna;
-  const msgs = (messages || [{ role: "user", content: message }]).map((m) =>
-    typeof m.content === "string"
-      ? { role: m.role || "user", content: [{ type: "text", text: m.content }] }
-      : m
-  );
+
+  // Human-like pacing: a real browser loads the page, solves the challenge,
+  // and only sends the chat a few seconds later. Signals must match that.
+  const elapsed = Date.now() - startedAt;
+  if (elapsed < 2600) await sleep(2600 - elapsed + Math.floor(Math.random() * 700));
+
+  const signals = {
+    start: startedAt,
+    events: [
+      { name: "impression", delta: 700 + Math.floor(Math.random() * 500) },
+      { name: "startNewChat_free", delta: 1900 + Math.floor(Math.random() * 600) },
+    ],
+    end: Date.now() - startedAt,
+  };
 
   const f = await getTransport();
   const res = await f(`${ORIGIN}/duckchat/v1/chat`, {
@@ -198,7 +207,7 @@ export async function chatViaScrape({ message, messages, model }) {
       "x-duckai-tool-approval": "web-search",
       "x-duckai-response-id": crypto.randomUUID(),
       "x-fe-version": fe.feVersion,
-      "x-fe-signals": buildFeSignals(startedAt),
+      "x-fe-signals": Buffer.from(JSON.stringify(signals)).toString("base64"),
       "x-vqd-hash-1": jsa,
       "x-ddg-journey-id": journeyId,
     },
@@ -220,7 +229,37 @@ export async function chatViaScrape({ message, messages, model }) {
     const err = new Error(`Phase 3 (chat) rejected: HTTP ${res.status}${type ? " " + type : ""} — ${text.slice(0, 200)}`);
     err.code = "CHAT_REJECTED";
     err.status = res.status;
+    err.type = type;
     throw err;
   }
   return { model: modelId, reply: parseSSE(text), mode: "scrape" };
+}
+
+export async function chatViaScrape({ message, messages, model }) {
+  const fe = await scrapeVersions();
+  const modelId = MODEL_IDS[model] || model || MODEL_IDS.Luna;
+  const msgs = (messages || [{ role: "user", content: message }]).map((m) =>
+    typeof m.content === "string"
+      ? { role: m.role || "user", content: [{ type: "text", text: m.content }] }
+      : m
+  );
+
+  // Observed live: the challenge verdict is inconsistent — the same flow
+  // sometimes gets 418 ERR_CHALLENGE and sometimes passes (a 400 for a bad
+  // model id proved the challenge can pass). So retry ONLY on 418, with a
+  // fresh journey + fresh challenge each time. Other errors are final.
+  const maxAttempts = Math.max(1, Number(process.env.DUCK_RETRIES || 4));
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const out = await chatAttempt({ msgs, modelId, fe });
+      out.attempts = attempt;
+      return out;
+    } catch (e) {
+      lastErr = e;
+      if (e.status !== 418 || attempt === maxAttempts) throw e;
+      await sleep(1500 * attempt);
+    }
+  }
+  throw lastErr;
 }
