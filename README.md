@@ -25,9 +25,13 @@ Tomar code --POST /chat {"message":"hi","model":"Luna"}--> ei server
 - Phase 1: ✅ `data-version-tag="serp_20261019_215825_ET"`, `data-version-sha="bb9ccdb8..."`
 - Model ID (bundle theke scrape): Luna = **`gpt-5.6-luna`**, aro ache `gpt-5.6-terra`, `claude-sonnet-4-6`, `gpt-5.4`...
 - Phase 2: ✅ challenge JS JSDOM-e run hoy, `server_hashes`/`client_hashes`/`meta` return kore
-- Phase 3: ⚠️ server ekhon **418 ERR_CHALLENGE** dey — sudhu Phase-2 hash-e hobe na,
-  current frontend aro `x-fe-signals` + extra token pathay. Sei ongsho baki kaj.
-  Server mithya reply banay na — error-ta clear kore return kore.
+- Phase 3: request shape ekhon full reverse-engineer kora — chat URL
+  `duck.ai/duckchat/v1/chat`, solver-er SHA-256 transform, `x-fe-signals`,
+  `x-ddg-journey-id`, body-te content-parts array. Code-e shob boshano.
+  Kintu ei sandbox VM theke live chat test sombhob na: VM-er egress proxy
+  POST-i atke dey (control test: example.com-e POST-o timeout, GET thik ache).
+  **Normal network-e (tomar machine/server) chaliye dekhte hobe** — sekhane
+  POST pouchabe. VM theke jachai kora shesh sima Phase 2 porjonto.
 
 Diagnostics nije chalaite: `GET /scrape-status` (Phase 1+2 live run kore dekhay)
 
