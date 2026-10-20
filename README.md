@@ -33,7 +33,13 @@ Tomar code --POST /chat {"message":"hi","model":"Luna"}--> ei server
   **Normal network-e (tomar machine/server) chaliye dekhte hobe** — sekhane
   POST pouchabe. VM theke jachai kora shesh sima Phase 2 porjonto.
 
-Diagnostics nije chalaite: `GET /scrape-status` (Phase 1+2 live run kore dekhay)
+Diagnostics nije chalaite: `GET /scrape-status` (Phase 1+2 live run kore dekhay,
+sathe transport dekhay — `impit-chrome` howa uchit)
+
+> v0.5: 418 ERR_CHALLENGE debug — transport ekhon **impit** (Chrome TLS/HTTP2
+> impersonation), karon plain Node fetch-er fingerprint Chrome UA-r sathe
+> mile na, challenge system setai dhore felte pare. Sathe missing
+> `Origin` / `sec-ch-ua` / `sec-fetch-*` header jog kora hoyeche.
 
 ## Chalao
 

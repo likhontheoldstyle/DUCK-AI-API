@@ -1,7 +1,7 @@
 import http from "node:http";
 import { KNOWN_MODELS, sendUpstream } from "./src/duckClient.js";
 import { chatViaBrowser } from "./src/browserClient.js";
-import { chatViaScrape, scrapeVersions, getChallenge, newJourneyId, MODEL_IDS } from "./src/scrapeClient.js";
+import { chatViaScrape, scrapeVersions, getChallenge, newJourneyId, getTransport, MODEL_IDS } from "./src/scrapeClient.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const MODE = process.env.DUCK_MODE || "scrape"; // scrape (default) | mock | browser | upstream
@@ -71,7 +71,8 @@ const server = http.createServer(async (req, res) => {
       // Diagnostics: run Phase 1 + 2 live and show what was scraped (no chat sent)
       const fe = await scrapeVersions();
       const ch = await getChallenge(fe, newJourneyId());
-      return json(res, 200, { phase1: fe, phase2: { statusBody: ch.statusBody, jsaLength: ch.jsa.length, jsaPrefix: ch.jsa.slice(0, 24) + "…" } });
+      const transport = (await getTransport()).kind;
+      return json(res, 200, { transport, phase1: fe, phase2: { statusBody: ch.statusBody, jsaLength: ch.jsa.length, jsaPrefix: ch.jsa.slice(0, 24) + "…" } });
     }
 
     if (req.method === "POST" && req.url === "/chat") {

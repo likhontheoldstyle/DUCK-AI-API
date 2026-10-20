@@ -33,8 +33,35 @@ export const ORIGIN = "https://duck.ai";
 const BASE_HEADERS = {
   "user-agent": UA,
   referer: ORIGIN + "/",
+  origin: ORIGIN,
   "accept-language": "en-US,en;q=0.9",
+  "sec-ch-ua": '"Chromium";v="138", "Google Chrome";v="138", "Not)A;Brand";v="99"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"Windows"',
+  "sec-fetch-dest": "empty",
+  "sec-fetch-mode": "cors",
+  "sec-fetch-site": "same-origin",
 };
+
+// Transport: prefer impit (Chrome TLS/HTTP2 impersonation) when installed —
+// a plain Node fetch has a Node TLS fingerprint, which challenge systems
+// can tell apart from the Chrome UA we claim (a likely cause of 418).
+// Falls back to global fetch if impit is unavailable.
+let _transport = null;
+export async function getTransport() {
+  if (_transport) return _transport;
+  try {
+    const { Impit } = await import("impit");
+    const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || undefined;
+    const impit = new Impit({ browser: "chrome", proxyUrl, timeout: 120_000 });
+    _transport = (url, opts) => impit.fetch(url, opts);
+    _transport.kind = "impit-chrome";
+  } catch {
+    _transport = (url, opts) => fetch(url, opts);
+    _transport.kind = "node-fetch";
+  }
+  return _transport;
+}
 
 export const MODEL_IDS = {
   Luna: "gpt-5.6-luna",
@@ -49,7 +76,8 @@ export function newJourneyId() {
 }
 
 export async function scrapeVersions() {
-  const res = await fetch(ORIGIN + "/", { headers: BASE_HEADERS });
+  const f = await getTransport();
+  const res = await f(ORIGIN + "/", { headers: BASE_HEADERS });
   if (!res.ok) throw new Error(`Phase 1 (HTML scrape) failed: HTTP ${res.status}`);
   const html = await res.text();
   const tag = html.match(/data-version-tag="([^"]+)"/)?.[1];
@@ -79,6 +107,7 @@ async function solveChallenge(challengeB64, fe) {
   try {
     Object.defineProperty(dom.window.navigator, "userAgent", { get: () => UA });
     Object.defineProperty(dom.window.navigator, "platform", { get: () => "Win32" });
+    Object.defineProperty(dom.window.navigator, "webdriver", { get: () => false });
   } catch {}
   dom.window.__DDG_BE_VERSION__ = fe.tag;
   dom.window.__DDG_FE_CHAT_HASH__ = fe.sha;
@@ -103,7 +132,8 @@ async function solveChallenge(challengeB64, fe) {
 }
 
 export async function getChallenge(fe, journeyId) {
-  const res = await fetch(`${ORIGIN}/duckchat/v1/status`, {
+  const f = await getTransport();
+  const res = await f(`${ORIGIN}/duckchat/v1/status`, {
     headers: { ...BASE_HEADERS, "cache-control": "no-store", "x-vqd-accept": "1", "x-ddg-journey-id": journeyId },
   });
   if (!res.ok) throw new Error(`Phase 2 (status) failed: HTTP ${res.status}`);
@@ -152,7 +182,8 @@ export async function chatViaScrape({ message, messages, model }) {
       : m
   );
 
-  const res = await fetch(`${ORIGIN}/duckchat/v1/chat`, {
+  const f = await getTransport();
+  const res = await f(`${ORIGIN}/duckchat/v1/chat`, {
     method: "POST",
     headers: {
       ...BASE_HEADERS,
