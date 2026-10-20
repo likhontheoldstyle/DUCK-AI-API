@@ -27,17 +27,53 @@
 
 import crypto from "node:crypto";
 
-const UA =
+const UA_WINDOWS =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36";
+const UA_ANDROID =
+  "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36";
+
+// Device profile: the UA, client-hints and the sandbox's navigator values
+// must all tell the SAME story — a Windows UA sent from an Android phone
+// (Termux) is a fingerprint mismatch that can hurt the challenge verdict.
+// Auto-picked by platform; override with DUCK_UA (and DUCK_NAV_PLATFORM).
+export function deviceProfile() {
+  if (process.env.DUCK_UA) {
+    return {
+      name: "custom (DUCK_UA)",
+      ua: process.env.DUCK_UA,
+      navPlatform: process.env.DUCK_NAV_PLATFORM || "Win32",
+      chPlatform: process.env.DUCK_UA.includes("Android") ? '"Android"' : '"Windows"',
+      chMobile: process.env.DUCK_UA.includes("Mobile") ? "?1" : "?0",
+    };
+  }
+  if (process.platform === "android") {
+    return {
+      name: "android",
+      ua: UA_ANDROID,
+      navPlatform: "Linux armv8l",
+      chPlatform: '"Android"',
+      chMobile: "?1",
+    };
+  }
+  return {
+    name: "windows",
+    ua: UA_WINDOWS,
+    navPlatform: "Win32",
+    chPlatform: '"Windows"',
+    chMobile: "?0",
+  };
+}
+
+export const PROFILE = deviceProfile();
 export const ORIGIN = "https://duck.ai";
 const BASE_HEADERS = {
-  "user-agent": UA,
+  "user-agent": PROFILE.ua,
   referer: ORIGIN + "/",
   origin: ORIGIN,
   "accept-language": "en-US,en;q=0.9",
   "sec-ch-ua": '"Chromium";v="138", "Google Chrome";v="138", "Not)A;Brand";v="99"',
-  "sec-ch-ua-mobile": "?0",
-  "sec-ch-ua-platform": '"Windows"',
+  "sec-ch-ua-mobile": PROFILE.chMobile,
+  "sec-ch-ua-platform": PROFILE.chPlatform,
   "sec-fetch-dest": "empty",
   "sec-fetch-mode": "cors",
   "sec-fetch-site": "same-origin",
@@ -105,12 +141,12 @@ async function solveChallenge(challengeB64, fe) {
     url: ORIGIN + "/",
     runScripts: "dangerously",
     pretendToBeVisual: true,
-    userAgent: UA,
+    userAgent: PROFILE.ua,
   });
   // Make the sandbox report the same UA we send on the wire
   try {
-    Object.defineProperty(dom.window.navigator, "userAgent", { get: () => UA });
-    Object.defineProperty(dom.window.navigator, "platform", { get: () => "Win32" });
+    Object.defineProperty(dom.window.navigator, "userAgent", { get: () => PROFILE.ua });
+    Object.defineProperty(dom.window.navigator, "platform", { get: () => PROFILE.navPlatform });
     Object.defineProperty(dom.window.navigator, "webdriver", { get: () => false });
   } catch {}
   dom.window.__DDG_BE_VERSION__ = fe.tag;
