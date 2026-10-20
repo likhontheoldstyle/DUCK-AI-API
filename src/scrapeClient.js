@@ -176,7 +176,16 @@ export function parseSSE(text) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function chatAttempt({ msgs, modelId, fe }) {
+// Body variants tried in order when the server answers 400 ERR_BAD_REQUEST.
+// The frontend body always contains `metadata` and `reasoningEffort` keys
+// (values can be empty), which the first version of this client omitted.
+const BODY_VARIANTS = [
+  { name: "v1-base", extra: {} },
+  { name: "v2-meta+reasoning", extra: { metadata: {}, reasoningEffort: "none" } },
+  { name: "v3-greeting", extra: { metadata: {}, reasoningEffort: "none", canShowGreeting: true } },
+];
+
+async function chatAttempt({ msgs, modelId, fe, variant }) {
   const startedAt = Date.now();
   const journeyId = newJourneyId();
   const { jsa } = await getChallenge(fe, journeyId);
@@ -213,13 +222,15 @@ async function chatAttempt({ msgs, modelId, fe }) {
     },
     body: JSON.stringify({
       model: modelId,
+      ...(variant.extra.metadata !== undefined ? { metadata: variant.extra.metadata } : {}),
       messages: msgs,
       canUseTools: true,
+      ...(variant.extra.reasoningEffort !== undefined ? { reasoningEffort: variant.extra.reasoningEffort } : {}),
       canUseApproxLocation: false,
       canDelegateImageGeneration: true,
       canUseWebSearch: true,
       canUploadFiles: true,
-      canShowGreeting: false,
+      canShowGreeting: variant.extra.canShowGreeting ?? false,
     }),
   });
   const text = await res.text();
@@ -245,20 +256,29 @@ export async function chatViaScrape({ message, messages, model }) {
   );
 
   // Observed live: the challenge verdict is inconsistent — the same flow
-  // sometimes gets 418 ERR_CHALLENGE and sometimes passes (a 400 for a bad
-  // model id proved the challenge can pass). So retry ONLY on 418, with a
-  // fresh journey + fresh challenge each time. Other errors are final.
-  const maxAttempts = Math.max(1, Number(process.env.DUCK_RETRIES || 4));
+  // sometimes gets 418 ERR_CHALLENGE and sometimes passes. So for each body
+  // variant: retry on 418 with a fresh journey + fresh challenge; on 400
+  // move to the next variant; any success reports which variant worked.
+  const retriesPerVariant = Math.max(1, Number(process.env.DUCK_RETRIES || 2));
   let lastErr;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const out = await chatAttempt({ msgs, modelId, fe });
-      out.attempts = attempt;
-      return out;
-    } catch (e) {
-      lastErr = e;
-      if (e.status !== 418 || attempt === maxAttempts) throw e;
-      await sleep(1500 * attempt);
+  for (const variant of BODY_VARIANTS) {
+    for (let attempt = 1; attempt <= retriesPerVariant; attempt++) {
+      try {
+        const out = await chatAttempt({ msgs, modelId, fe, variant });
+        console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> OK`);
+        out.variant = variant.name;
+        out.attempts = attempt;
+        return out;
+      } catch (e) {
+        lastErr = e;
+        console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> HTTP ${e.status || "?"} ${e.type || ""}`);
+        if (e.status === 400) break; // deterministic for this variant; try next
+        if (e.status !== 418 || attempt === retriesPerVariant) {
+          if (e.status !== 418) throw e;
+          break;
+        }
+        await sleep(1500 * attempt);
+      }
     }
   }
   throw lastErr;
