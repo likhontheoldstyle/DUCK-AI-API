@@ -1,1 +1,22 @@
-{"dependencies":{"jsdom":"^30.1.3"},"description":"API to use the duck.ai model (Luna) via direct scraping - POST /chat, no browser automation","engines":{"node":">=18"},"main":"server.js","name":"duck-ai-api","optionalDependencies":{"playwright":"^1.49.0"},"scripts":{"dev":"node --watch server.js","start":"node server.js","start:browser":"DUCK_MODE=browser node server.js","start:mock":"DUCK_MODE=mock node server.js"},"type":"module","version":"0.3.0"}
+{
+  "dependencies": {
+    "jsdom": "^30.1.3"
+  },
+  "description": "API to use the duck.ai model (Luna) via direct scraping - POST /chat, no browser automation",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "server.js",
+  "name": "duck-ai-api",
+  "optionalDependencies": {
+    "playwright": "^1.49.0"
+  },
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js",
+    "start:browser": "DUCK_MODE=browser node server.js",
+    "start:mock": "DUCK_MODE=mock node server.js"
+  },
+  "type": "module",
+  "version": "0.4.0"
+}
