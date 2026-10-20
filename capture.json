@@ -1,0 +1,79 @@
+{
+  "captured_at": "2026-10-20T21:40:00+06:00",
+  "live_tokens_or_cookies_extracted": false,
+  "note_on_tokens": "Duck.ai / DuckDuckGo chat uses ephemeral, short-lived anti-abuse challenge headers (x-vqd-*) that are generated per session. They were NOT extracted from the live browser session in this capture, and they expire / rotate, so they cannot be reused as a stable API key.",
+  "observed_chat_url": "https://duck.ai/?chatID=2fc9969f-5eed-4ff8-8f68-0d555de859f5",
+  "observed_session": {
+    "assistant_response": "Hi! How can I help?",
+    "chat_auto_title": "Greeting",
+    "model_label_in_response": "GPT-6 Luna",
+    "model_selected": "Luna",
+    "privacy_consent_gate_shown_before_first_message": true,
+    "streaming_indicator": "Generating response -> Response complete",
+    "user_message": "hi"
+  },
+  "public_research_upstream_shape": {
+    "endpoints": [
+      {
+        "method": "GET",
+        "purpose": "Version discovery - HTML contains __DDG_BE_VERSION__ and __DDG_FE_CHAT_HASH__",
+        "url": "https://duckduckgo.com/?q=DuckDuckGo+AI+Chat&ia=chat&duckai=1"
+      },
+      {
+        "method": "GET",
+        "purpose": "Authentication challenge",
+        "request_headers": [
+          "x-vqd-accept: 1",
+          "referer: https://duckduckgo.com/"
+        ],
+        "response_header_of_interest": "x-vqd-hash-1 (base64-encoded JavaScript challenge)",
+        "url": "https://duckduckgo.com/duckchat/v1/status"
+      },
+      {
+        "method": "POST",
+        "purpose": "Streaming chat (Server-Sent Events)",
+        "request_body_example": {
+          "canUseTools": true,
+          "messages": [
+            {
+              "content": "hello",
+              "role": "user"
+            }
+          ],
+          "metadata": {
+            "toolChoice": {
+              "NewsSearch": false,
+              "VideosSearch": false
+            }
+          },
+          "model": "claude-3-5-haiku-latest"
+        },
+        "request_headers": [
+          "content-type: application/json",
+          "accept: text/event-stream",
+          "x-fe-version: <be_version>-<fe_chat_hash>",
+          "x-vqd-hash-1: <hash generated from the status challenge>",
+          "x-fe-signals: <base64 signals>"
+        ],
+        "url": "https://duckduckgo.com/duckchat/v1/chat"
+      }
+    ],
+    "note": "From public DeepWiki documentation of an older unofficial duck-ai-api project, crawled ~355 days before 2026-10-20. The current duck.ai frontend may use a newer version/path, so verify in your own browser DevTools > Network if you proceed."
+  },
+  "source_page": "https://duck.ai/",
+  "html_scrape_attempt": {
+    "attempted_at": "2026-10-20T21:43:00+06:00",
+    "targets": [
+      "https://duck.ai/",
+      "https://duckduckgo.com/?q=DuckDuckGo+AI+Chat&ia=chat&duckai=1"
+    ],
+    "result": "raw HTML not retrievable via browser tools - only rendered text was returned",
+    "rendered_title": "Duck.ai by DuckDuckGo. Private AI chat. Free.",
+    "items_verified": {
+      "__DDG_BE_VERSION__": null,
+      "__DDG_FE_CHAT_HASH__": null,
+      "script_srcs": null,
+      "note": "not found is NOT confirmed - raw source was unavailable, so absence cannot be verified"
+    }
+  }
+}

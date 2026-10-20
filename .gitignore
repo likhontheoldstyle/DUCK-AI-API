@@ -1,0 +1,4 @@
+node_modules/
+.env
+.duck-profile/
+*.log
