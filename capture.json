@@ -75,5 +75,55 @@
       "script_srcs": null,
       "note": "not found is NOT confirmed - raw source was unavailable, so absence cannot be verified"
     }
+  },
+  "html_scrape_live_2026-10-20": {
+    "phase1_html": {
+      "url": "https://duck.ai/",
+      "html_bytes": 26535,
+      "data_version_tag": "serp_20261019_215825_ET",
+      "data_version_sha": "bb9ccdb877b53b7d778e8975f3c4c8b0ff8e228b",
+      "x_fe_version_derived": "serp_20261019_215825_ET-bb9ccdb877b53b7d778e8975f3c4c8b0ff8e228b",
+      "note": "Frontend sets __DDG_BE_VERSION__/__DDG_FE_CHAT_HASH__ from these <html> attributes (found in entry JS bundle)",
+      "script_bundles": [
+        "/dist/duckai-dist/lib.91d392df195d4371dfcff8dd.js",
+        "/dist/locale/en_US.53fed3ced011225a037e5e6063705ccc.js",
+        "/dist/duckai-dist/entry.vendors.af6502b348e84f1dfd99.js",
+        "/dist/duckai-dist/entry.duckai.306b297ec65bb871ca45.js"
+      ]
+    },
+    "phase2_status": {
+      "url": "https://duckduckgo.com/duckchat/v1/status",
+      "http": 200,
+      "body": {
+        "status": "0",
+        "secondaryStatus": "0",
+        "statusV2": 0,
+        "grant": null
+      },
+      "x_vqd_hash_1": "base64 JS challenge, ~5408 chars header / ~4-4.8KB decoded, executes in JSDOM and returns {server_hashes(3), client_hashes(3), signals, meta{v:4, challenge_id, timestamp}} - VALUES NOT STORED (single-use, ephemeral)"
+    },
+    "phase3_chat_test": {
+      "url": "https://duckduckgo.com/duckchat/v1/chat",
+      "http": 418,
+      "type": "ERR_CHALLENGE",
+      "note": "Server rejected the Phase-2 hash alone; current frontend also sends x-fe-signals and extra token headers. Not retried repeatedly to avoid hammering the service."
+    },
+    "models_scraped_from_bundle": [
+      "gpt-5.6-luna",
+      "gpt-5.6-terra",
+      "gpt-5.4",
+      "gpt-4o",
+      "gpt-4o-mini",
+      "claude-opus-4-8",
+      "claude-sonnet-4-6",
+      "claude-sonnet-5-5"
+    ],
+    "other_endpoints_in_bundle": [
+      "/duckchat/v1/capabilities",
+      "/duckchat/v1/auth/authorize",
+      "/duckchat/v1/auth/token",
+      "/duckchat/v1/auth/logout",
+      "/duckchat/v1/auth/callback"
+    ]
   }
 }
