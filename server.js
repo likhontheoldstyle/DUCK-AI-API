@@ -23,8 +23,42 @@ function readBody(req) {
   });
 }
 
+const HOME_PAGE = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DUCK-AI-API</title>
+<style>body{font-family:system-ui,sans-serif;max-width:720px;margin:24px auto;padding:0 16px}
+#log{white-space:pre-wrap;border:1px solid #ccc;border-radius:8px;padding:12px;min-height:160px}
+input,select,button{font-size:16px;padding:8px} #msg{width:70%}</style></head>
+<body>
+<h2>DUCK-AI-API — Chat Test</h2>
+<p>Server is running. Type a message and press Send — this page calls <code>POST /chat</code> for you.</p>
+<div id="log"></div>
+<p><input id="msg" placeholder="Type your message, e.g. hi">
+<select id="model"><option>Luna</option><option>Terra</option><option>Claude Sonnet</option><option>GPT-5.4</option><option>GPT-4o mini</option></select>
+<button id="send">Send</button></p>
+<p style="color:#555">API endpoints: GET /health &nbsp; GET /models &nbsp; GET /scrape-status &nbsp; POST /chat</p>
+<script>
+const log=document.getElementById('log');
+async function send(){
+  const message=document.getElementById('msg').value.trim(); if(!message) return;
+  const model=document.getElementById('model').value;
+  log.textContent += 'You: '+message+'\\nWaiting...\\n';
+  try{
+    const r=await fetch('/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message,model})});
+    const j=await r.json();
+    log.textContent += (j.reply?('AI ('+(j.model||model)+'): '+j.reply):('Error '+r.status+': '+(j.error||JSON.stringify(j))))+'\\n\\n';
+  }catch(e){ log.textContent += 'Error: '+e.message+'\\n\\n'; }
+}
+document.getElementById('send').onclick=send;
+document.getElementById('msg').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+</script></body></html>`;
+
 const server = http.createServer(async (req, res) => {
   try {
+    if (req.method === "GET" && (req.url === "/" || req.url === "")) {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      return res.end(HOME_PAGE);
+    }
     if (req.method === "GET" && req.url === "/health") {
       return json(res, 200, { ok: true, mode: MODE, models: Object.keys(MODEL_IDS),
         usage: 'POST /chat {"message":"hi","model":"Luna"}' });
