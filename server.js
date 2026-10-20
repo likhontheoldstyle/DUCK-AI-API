@@ -34,7 +34,7 @@ input,select,button{font-size:16px;padding:8px} #msg{width:70%}</style></head>
 <p>Server is running. Type a message and press Send — this page calls <code>POST /chat</code> for you.</p>
 <div id="log"></div>
 <p><input id="msg" placeholder="Type your message, e.g. hi">
-<select id="model"><option>Luna</option><option>Terra</option><option>Claude Sonnet</option><option>GPT-5.4</option><option>GPT-4o mini</option></select>
+<select id="model"><option>Luna</option><option>Terra</option><option>Claude Sonnet</option><option>Claude Haiku</option><option>GPT-5.4 mini</option><option>Mistral</option></select>
 <button id="send">Send</button></p>
 <p style="color:#555">API endpoints: GET /health &nbsp; GET /models &nbsp; GET /scrape-status &nbsp; POST /chat</p>
 <script>

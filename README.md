@@ -16,7 +16,7 @@ Tomar code --POST /chat {"message":"hi","model":"Luna"}--> ei server
            -> JSDOM sandbox-e run kore hash header banano
   Phase 3: POST https://duckduckgo.com/duckchat/v1/chat (SSE)
            headers: x-fe-version, x-vqd-hash-1
-           body: {model: "gpt-5.6-luna", messages: [...]}
+           body: {model: "gpt-6-luna", messages: [...]}
 <-- JSON reply {"model":"gpt-5.6-luna","reply":"...","mode":"scrape"}
 ```
 

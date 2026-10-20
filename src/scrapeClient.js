@@ -16,7 +16,7 @@
 //             headers: X-Vqd-Hash-1: <solved jsa>, x-fe-version,
 //                      x-fe-signals: btoa(JSON({start, events, end})),
 //                      x-ddg-journey-id, x-duckai-response-id, ...
-//             body: { model: "gpt-5.6-luna",
+//             body: { model: "gpt-6-luna",
 //                     messages: [{ role:"user",
 //                                  content:[{type:"text", text}] }],
 //                     canUseTools, canUseWebSearch, ... }
@@ -63,12 +63,16 @@ export async function getTransport() {
   return _transport;
 }
 
+// Model IDs scraped from duck.ai's own model list in its JS bundle
+// (2026-10-20). NOTE: Luna's id is "gpt-6-luna" — the older "gpt-5.6-luna"
+// id was replaced and the server rejects it with 400 ERR_BAD_REQUEST.
 export const MODEL_IDS = {
-  Luna: "gpt-5.6-luna",
+  Luna: "gpt-6-luna",
   Terra: "gpt-5.6-terra",
   "Claude Sonnet": "claude-sonnet-4-6",
-  "GPT-5.4": "gpt-5.4",
-  "GPT-4o mini": "gpt-4o-mini",
+  "Claude Haiku": "claude-haiku-4-5",
+  "GPT-5.4 mini": "gpt-5.4-mini",
+  Mistral: "mistral-small-2603",
 };
 
 export function newJourneyId() {

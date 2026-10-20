@@ -159,5 +159,17 @@
     },
     "vm_egress_block": "Control tests on the Muse sandbox VM: POST https://example.com/ timed out (20s), POST https://duck.ai/duckchat/v1/status timed out, while GETs respond in ~1s and POST https://duckduckgo.com/duckchat/v1/chat returns 418 in ~6s. So a live chat POST to duck.ai cannot be completed from this VM \u2014 its egress proxy holds most POSTs. The API must be run on a normal network to complete Phase 3.",
     "phase1_phase2_live_through_server": "GET /scrape-status returned fresh version tag/sha and a solved jsa (860 chars) on 2026-10-20"
+  },
+  "model_ids_corrected_2026-10-20": {
+    "note": "Scraped from the model list inside duck.ai's JS bundle. Luna's real id is gpt-6-luna; gpt-5.6-luna is a replaced/old id and the server answered 400 ERR_BAD_REQUEST for it on Likhon's Termux test (after the challenge passed).",
+    "models": {
+      "Luna": "gpt-6-luna",
+      "Terra": "gpt-5.6-terra (Plus/Pro)",
+      "GPT-5.4 mini": "gpt-5.4-mini",
+      "Claude Sonnet": "claude-sonnet-4-6",
+      "Claude Haiku": "claude-haiku-4-5",
+      "Mistral": "mistral-small-2603"
+    },
+    "termux_note": "On Termux/Android impit (native binary) does not load, so transport falls back to node-fetch there - scrape-status showed transport: node-fetch on Likhon's test. Phases 1-2 still worked."
   }
 }
