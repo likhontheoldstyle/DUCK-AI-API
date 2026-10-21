@@ -104,7 +104,7 @@ You can pass either the friendly name (`"Luna"`) or the raw model ID (`"gpt-6-lu
 |---|---|---|
 | GET | `/` | Simple chat test page |
 | GET | `/app` | **NIJHUM DUCK Ai** — the full chat page (RIKA-style UI): sidebar with saved chats, model selector, image generation and photo edit, connected to the real API |
-| GET | `/image-studio` | **NIJHUM Image Studio** — the dedicated image generation page: prompt + style presets, prompt-model selector, force-new (cache bypass), large preview, download/open, a built-in edit panel for the generated image, and a local gallery (aliases: `/image-gen`, `/studio`) |
+| GET | `/image-studio` | **NIJHUM Image Studio** — the dedicated image generation page: prompt + style presets, fixed gpt-image-2 model, force-new (cache bypass), large preview, download/open, a built-in edit panel for the generated image, and a local gallery (aliases: `/image-gen`, `/studio`) |
 | GET | `/image-view?prompt=...` | Generates an image and shows it on a page (with title and revised prompt) |
 | GET | `/edit` | Image edit page — pick a photo, describe the edit, get the edited image |
 | GET | `/last-image` | Serves the most recently generated/edited image as a raw JPEG |

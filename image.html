@@ -371,7 +371,7 @@
       <div class="layout">
         <section class="saas-card panel" aria-label="Image generation controls">
           <h2>Generate an image</h2>
-          <p class="sub">Prompt lekho — model seta enhance kore image banabe. Rendering hoy dedicated image model diye; select kora model prompt-ta sajay.</p>
+          <p class="sub">Prompt lekho — model seta enhance kore image banabe. Rendering hoy ekta-i fixed image model (gpt-image-2) diye.</p>
 
           <div class="field">
             <label for="promptInput">Prompt</label>
@@ -385,15 +385,8 @@
           </div>
 
           <div class="field">
-            <label for="modelSelect">Prompt model</label>
-            <select id="modelSelect">
-              <option value="Luna" selected>Luna (gpt-6-luna)</option>
-              <option value="GPT-5.4 mini">GPT-5.4 mini</option>
-              <option value="Claude Haiku">Claude Haiku</option>
-              <option value="Mistral">Mistral</option>
-              <option value="Gemma">Gemma</option>
-              <option value="gpt-oss">gpt-oss</option>
-            </select>
+            <label>Image model</label>
+            <div class="meta-box"><span class="k">gpt-image-2</span> · ekta-i model, fixed — generation ar edit duitari rendering eta diyei hoy.</div>
           </div>
 
           <div class="field">
@@ -482,7 +475,7 @@
 
   var promptInput = document.getElementById("promptInput");
   var charCount = document.getElementById("charCount");
-  var modelSelect = document.getElementById("modelSelect");
+  var PROMPT_MODEL = "Luna";
   var styleSelect = document.getElementById("styleSelect");
   var freshCheck = document.getElementById("freshCheck");
   var generateBtn = document.getElementById("generateBtn");
@@ -670,7 +663,7 @@
     }
     setBusy(true);
     var started = startTimer(statusLine, "Chhobi banacche… opekkha koro");
-    api("/image", { prompt: finalPrompt(), model: modelSelect.value, fresh: !!freshCheck.checked })
+    api("/image", { prompt: finalPrompt(), model: PROMPT_MODEL, fresh: !!freshCheck.checked })
       .then(function (j) {
         stopTimer();
         var src = (j.images || [])[0];
@@ -684,7 +677,7 @@
           title: j.title || "",
           prompt: prompt,
           revised: j.revised_prompt || "",
-          model: j.model || modelSelect.value,
+          model: "gpt-image-2",
           at: new Date().toLocaleTimeString()
         }, true);
         setStatus(statusLine, "done", "Done · " + sec + "s-e chhobi ready.", false);
@@ -733,7 +726,7 @@
     var started = startTimer(editStatus, "Edit hocche… opekkha koro");
     sourceToPng(current.src)
       .then(function (dataUrl) {
-        return api("/image-edit", { image: dataUrl, prompt: instruction, model: modelSelect.value });
+        return api("/image-edit", { image: dataUrl, prompt: instruction, model: PROMPT_MODEL });
       })
       .then(function (j) {
         stopTimer();
@@ -748,7 +741,7 @@
           title: j.title || "",
           prompt: instruction,
           revised: j.revised_prompt || "",
-          model: j.model || modelSelect.value,
+          model: "gpt-image-2",
           at: new Date().toLocaleTimeString()
         }, true);
         setStatus(editStatus, "done", "Edit done · " + sec + "s.", false);
