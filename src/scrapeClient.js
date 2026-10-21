@@ -323,17 +323,41 @@ export async function chatViaScrape({ message, messages, model, image = false, i
       ? { role: m.role || "user", content: [{ type: "text", text: m.content }] }
       : m
   );
-  let imgShapes = null;
+  let imgCtx = null;
   if (imageData) {
     const mime = imageMime || (imageData.startsWith("data:") ? imageData.slice(5, imageData.indexOf(";")) : "image/jpeg");
     const uri = imageData.startsWith("data:") ? imageData : `data:${mime};base64,${imageData}`;
     const raw = uri.slice(uri.indexOf(",") + 1);
     const text = typeof message === "string" && message ? message : "Edit this image";
-    imgShapes = [
-      { type: "image", mimeType: mime, image: uri },
-      { type: "image", mimeType: mime, image: raw },
+    imgCtx = { mime, uri, raw, text };
+  }
+
+  if (imgCtx) {
+    const V2 = BODY_VARIANTS[0], V1 = BODY_VARIANTS[1];
+    const imgPart = (img) => ({ type: "image", mimeType: imgCtx.mime, image: img });
+    const seq = [
+      { name: "imgA-text-first-dataurl", variant: V2, parts: [{ type: "text", text: imgCtx.text }, imgPart(imgCtx.uri)] },
+      { name: "imgB-text-first-dataurl-v1", variant: V1, parts: [{ type: "text", text: imgCtx.text }, imgPart(imgCtx.uri)] },
+      { name: "imgC-image-first-dataurl", variant: V2, parts: [imgPart(imgCtx.uri), { type: "text", text: imgCtx.text }] },
+      { name: "imgD-text-first-rawb64", variant: V2, parts: [{ type: "text", text: imgCtx.text }, imgPart(imgCtx.raw)] },
     ];
-    msgs = [{ role: "user", content: [imgShapes[0], { type: "text", text }] }];
+    let lastErr;
+    for (const step of seq) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const out = await chatAttempt({ msgs: [{ role: "user", content: step.parts }], modelId, fe, variant: step.variant, metadata });
+          console.log(`[duck-ai-api] ${step.name} attempt ${attempt} -> OK`);
+          out.variant = step.name;
+          return out;
+        } catch (e) {
+          lastErr = e;
+          console.log(`[duck-ai-api] ${step.name} attempt ${attempt} -> HTTP ${e.status || "?"} ${e.type || ""}`);
+          if (e.status === 418 && attempt < 2) { await sleep(1500); continue; }
+          break;
+        }
+      }
+    }
+    throw lastErr;
   }
 
   const retriesPerVariant = Math.max(1, Number(process.env.DUCK_RETRIES || 2));
@@ -342,14 +366,7 @@ export async function chatViaScrape({ message, messages, model, image = false, i
   for (const variant of variants) {
     for (let attempt = 1; attempt <= retriesPerVariant; attempt++) {
       try {
-        let useMsgs = msgs;
-        if (imgShapes) {
-          const shape = imgShapes[(attempt - 1) % imgShapes.length];
-          const parts = attempt >= 3 ? [msgs[0].content[1], shape] : [shape, msgs[0].content[1]];
-          useMsgs = [{ role: "user", content: parts }];
-          console.log(`[duck-ai-api] image part shape ${(attempt - 1) % imgShapes.length} (${shape.image.startsWith("data:") ? "data-url" : "raw-b64"})`);
-        }
-        const out = await chatAttempt({ msgs: useMsgs, modelId, fe, variant, metadata });
+        const out = await chatAttempt({ msgs, modelId, fe, variant, metadata });
         console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> OK`);
         out.variant = variant.name;
         out.attempts = attempt;

@@ -127,7 +127,7 @@ $('b').onclick=async()=>{
   const scale=Math.min(1,1024/Math.max(bmp.width,bmp.height));
   const cv=document.createElement('canvas');cv.width=Math.round(bmp.width*scale);cv.height=Math.round(bmp.height*scale);
   cv.getContext('2d').drawImage(bmp,0,0,cv.width,cv.height);
-  const dataUrl=cv.toDataURL('image/jpeg',0.9);
+  const dataUrl=cv.toDataURL('image/png');
   try{
     const res=await fetch('/image-edit',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({image:dataUrl,prompt:$('p').value,model:'Luna'})});
     const j=await res.json();
