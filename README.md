@@ -115,3 +115,12 @@ curl -X POST http://localhost:3000/v1/images/generations -H 'content-type: appli
 - `"stream": true` is supported (SSE chunks, OpenAI shape).
 - Python example with the official SDK: `examples/call_openai_sdk.py`.
 - The original simple endpoints (`POST /chat`, `POST /image`) still work too.
+
+## Simple GET API (browser link)
+
+Paste in a browser, no tools needed:
+
+- `http://localhost:3000/chat?message=hi&model=Luna`
+- `http://localhost:3000/image?prompt=a+cat+in+space`
+
+Returns plain JSON with the reply / image URLs.

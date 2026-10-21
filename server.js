@@ -123,6 +123,25 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { transport, deviceProfile: PROFILE.name, userAgent: PROFILE.ua, phase1: fe, phase2: { statusBody: ch.statusBody, jsaLength: ch.jsa.length, jsaPrefix: ch.jsa.slice(0, 24) + "…" } });
     }
 
+    // ---------- Simple GET API (paste link in browser) ----------
+    // GET /chat?message=hi&model=Luna   |   GET /image?prompt=a+cat
+    if (req.method === "GET" && (req.url.startsWith("/chat?") || req.url.startsWith("/image?"))) {
+      const u = new URL(req.url, "http://localhost");
+      const model = u.searchParams.get("model") || process.env.DUCK_MODEL || "Luna";
+      const isImage = req.url.startsWith("/image");
+      const text = u.searchParams.get(isImage ? "prompt" : "message") || u.searchParams.get("q") || "";
+      if (!text) {
+        return json(res, 400, { error: isImage ? "Use /image?prompt=a+cat+in+space" : "Use /chat?message=hi&model=Luna" });
+      }
+      if (MODE !== "scrape") {
+        const reply = text.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${model}] You said: ${text}`;
+        return json(res, 200, { model, reply, mode: MODE });
+      }
+      const out = await enqueueScrape({ message: text, model, image: isImage });
+      if (isImage) return json(res, 200, { model: out.model, prompt: text, images: out.images || [], reply: out.reply });
+      return json(res, 200, { model: out.model, reply: out.reply, variant: out.variant });
+    }
+
     if (req.method === "POST" && req.url === "/chat") {
       const body = await readBody(req);
       const message = body.message || body.messages?.at(-1)?.content;
