@@ -318,11 +318,19 @@ export async function chatViaScrape({ message, messages, model, image = false, i
   const metadata = image ? { toolChoice: { GenerateImage: true } } : undefined;
   const fe = await scrapeVersions();
   const modelId = MODEL_IDS[model] || model || MODEL_IDS.Luna;
-  let msgs = (messages || [{ role: "user", content: message }]).map((m) =>
-    typeof m.content === "string"
-      ? { role: m.role || "user", content: [{ type: "text", text: m.content }] }
-      : m
-  );
+  const rawMsgs = messages || [{ role: "user", content: message }];
+  const hasAssistant = rawMsgs.some((m) => (m.role || "user") === "assistant");
+  const buildMsgs = (style) => rawMsgs.map((m) => {
+    if (typeof m.content !== "string") return m;
+    const role = m.role || "user";
+    if (role === "assistant") {
+      return style === "frontend"
+        ? { role: "assistant", content: "", parts: [{ type: "text", text: m.content }] }
+        : { role: "assistant", content: [{ type: "text", text: m.content }] };
+    }
+    return { role, content: [{ type: "text", text: m.content }] };
+  });
+  let msgs = buildMsgs("frontend");
   let imgCtx = null;
   if (imageData) {
     const mime = imageMime || (imageData.startsWith("data:") ? imageData.slice(5, imageData.indexOf(";")) : "image/jpeg");
@@ -362,26 +370,37 @@ export async function chatViaScrape({ message, messages, model, image = false, i
 
   const retriesPerVariant = Math.max(1, Number(process.env.DUCK_RETRIES || 2));
   const variants = modelId === "tinfoil/gpt-oss-120b" ? OSS_VARIANTS : BODY_VARIANTS;
-  let lastErr;
-  for (const variant of variants) {
-    for (let attempt = 1; attempt <= retriesPerVariant; attempt++) {
-      try {
-        const out = await chatAttempt({ msgs, modelId, fe, variant, metadata });
-        console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> OK`);
-        out.variant = variant.name;
-        out.attempts = attempt;
-        return out;
-      } catch (e) {
-        lastErr = e;
-        console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> HTTP ${e.status || "?"} ${e.type || ""}`);
-        if (e.status === 400) break;
-        if (e.status !== 418 || attempt === retriesPerVariant) {
-          if (e.status !== 418) throw e;
-          break;
+  async function runWith(msgsToUse) {
+    let lastErr;
+    for (const variant of variants) {
+      for (let attempt = 1; attempt <= retriesPerVariant; attempt++) {
+        try {
+          const out = await chatAttempt({ msgs: msgsToUse, modelId, fe, variant, metadata });
+          console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> OK`);
+          out.variant = variant.name;
+          out.attempts = attempt;
+          return out;
+        } catch (e) {
+          lastErr = e;
+          console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> HTTP ${e.status || "?"} ${e.type || ""}`);
+          if (e.status === 400) break;
+          if (e.status !== 418 || attempt === retriesPerVariant) {
+            if (e.status !== 418) throw e;
+            break;
+          }
+          await sleep(1500 * attempt);
         }
-        await sleep(1500 * attempt);
       }
     }
+    throw lastErr;
   }
-  throw lastErr;
+  try {
+    return await runWith(msgs);
+  } catch (e) {
+    if (hasAssistant && e.status === 400) {
+      console.log("[duck-ai-api] assistant-history shape A rejected, retrying with shape B");
+      return await runWith(buildMsgs("legacy"));
+    }
+    throw e;
+  }
 }
