@@ -166,10 +166,22 @@ curl "http://localhost:3000/chat?message=Hello&model=Luna"
 
 ```json
 {
+  "status": true,
+  "id": "chatcmpl-a1b2c3d4",
+  "object": "chat.completion",
   "model": "gpt-6-luna",
   "reply": "Hello! How can I help?",
-  "mode": "scrape",
-  "variant": "v2-meta+reasoning"
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "Hello! How can I help?" },
+      "finish_reason": "stop"
+    }
+  ],
+  "time": "2026-10-21T08:51:00.000Z",
+  "variant": "v2-meta+reasoning",
+  "author": "LIKHON AHMED",
+  "signature": "DUCK-AI-API by LIKHON AHMED"
 }
 ```
 

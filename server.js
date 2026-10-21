@@ -62,6 +62,40 @@ function json(res, status, body) {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body, null, 2));
 }
+const AUTHOR = "LIKHON AHMED";
+const SIGNATURE = "DUCK-AI-API by LIKHON AHMED";
+function chatShape({ model, reply, extra = {} }) {
+  return {
+    status: true,
+    id: "chatcmpl-" + Math.random().toString(36).slice(2, 10),
+    object: "chat.completion",
+    model,
+    reply,
+    choices: [{ index: 0, message: { role: "assistant", content: reply ?? "" }, finish_reason: "stop" }],
+    time: new Date().toISOString(),
+    ...extra,
+    author: AUTHOR,
+    signature: SIGNATURE,
+  };
+}
+function imageShape({ model, prompt, out, extra = {} }) {
+  return {
+    status: true,
+    id: "img-" + Math.random().toString(36).slice(2, 10),
+    object: "image.result",
+    model,
+    prompt,
+    images: out.images || [],
+    title: out.title || undefined,
+    revised_prompt: out.revised_prompt || undefined,
+    reply: out.reply,
+    time: new Date().toISOString(),
+    ...extra,
+    author: AUTHOR,
+    signature: SIGNATURE,
+  };
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let raw = "";
@@ -175,12 +209,12 @@ const server = http.createServer(async (req, res) => {
       }
       if (MODE !== "scrape") {
         const reply = text.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${model}] You said: ${text}`;
-        return json(res, 200, { model, reply, mode: MODE });
+        return json(res, 200, chatShape({ model, reply }));
       }
       const out = await enqueueScrape({ message: text, model, image: isImage });
       if (isImage) rememberImage(out);
-      if (isImage) return json(res, 200, { model: out.model, prompt: text, images: out.images || [], title: out.title || undefined, revised_prompt: out.revised_prompt || undefined, reply: out.reply, debug: out.debug });
-      return json(res, 200, { model: out.model, reply: out.reply, variant: out.variant });
+      if (isImage) return json(res, 200, imageShape({ model: out.model, prompt: text, out, extra: { debug: out.debug, ...(out.cached ? { cached: true } : {}) } }));
+      return json(res, 200, chatShape({ model: out.model, reply: out.reply, extra: { variant: out.variant, ...(out.cached ? { cached: true } : {}) } }));
     }
 
     if (req.method === "POST" && req.url === "/chat") {
@@ -191,11 +225,12 @@ const server = http.createServer(async (req, res) => {
 
       if (MODE === "scrape") {
         const out = await enqueueScrape({ message, messages: body.messages, model, image: !!body.image });
-        return json(res, 200, out);
+        if (body.image) { rememberImage(out); return json(res, 200, imageShape({ model: out.model, prompt: message, out, extra: { variant: out.variant, debug: out.debug } })); }
+        return json(res, 200, chatShape({ model: out.model, reply: out.reply, extra: { variant: out.variant, ...(out.cached ? { cached: true } : {}) } }));
       }
       if (MODE === "browser") {
         const out = await chatViaBrowser({ message, model });
-        return json(res, 200, { model: out.model, reply: out.reply, mode: "browser" });
+        return json(res, 200, chatShape({ model: out.model, reply: out.reply }));
       }
       if (MODE === "upstream") {
         const messages = body.messages || [{ role: "user", content: message }];
@@ -204,7 +239,7 @@ const server = http.createServer(async (req, res) => {
         return res.end(await upstream.text());
       }
       const reply = message.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${model}] You said: ${message}`;
-      return json(res, 200, { model, reply, mode: "mock" });
+      return json(res, 200, chatShape({ model, reply }));
     }
 
     if (req.method === "GET" && req.url === "/v1/models") {
@@ -309,11 +344,11 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       if (!body.image) return json(res, 400, { error: "missing 'image' (base64 or data URI)" });
       if (!body.prompt) return json(res, 400, { error: "missing 'prompt' (what edit to make)" });
-      if (MODE === "mock") return json(res, 200, { model: body.model || "Luna", images: [], mode: "mock" });
+      if (MODE === "mock") return json(res, 200, imageShape({ model: body.model || "Luna", prompt: body.prompt, out: { images: [] } }));
       if (MODE !== "scrape") return json(res, 400, { error: "image edit requires DUCK_MODE=scrape" });
       const out = await enqueueScrape({ message: body.prompt, model: body.model || "Luna", image: true, imageData: body.image, imageMime: body.mime });
       rememberImage(out);
-      return json(res, 200, { model: out.model, prompt: body.prompt, images: out.images || [], title: out.title || undefined, revised_prompt: out.revised_prompt || undefined, reply: out.reply, mode: "scrape", variant: out.variant, debug: out.debug });
+      return json(res, 200, imageShape({ model: out.model, prompt: body.prompt, out, extra: { variant: out.variant, debug: out.debug } }));
     }
 
     if (req.method === "GET" && (req.url === "/edit" || req.url.startsWith("/edit?"))) {
@@ -328,7 +363,7 @@ const server = http.createServer(async (req, res) => {
       if (MODE !== "scrape") return json(res, 400, { error: "Image generation needs DUCK_MODE=scrape" });
       const out = await enqueueScrape({ message: prompt, model, image: true });
       rememberImage(out);
-      return json(res, 200, { model: out.model, prompt, images: out.images || [], title: out.title || undefined, revised_prompt: out.revised_prompt || undefined, reply: out.reply, mode: "scrape", variant: out.variant, debug: out.debug });
+      return json(res, 200, imageShape({ model: out.model, prompt, out, extra: { variant: out.variant, debug: out.debug } }));
     }
     return json(res, 404, { error: "Not found. Try GET /health, GET /models, GET /scrape-status, POST /chat, POST /image" });
   } catch (e) {
