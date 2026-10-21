@@ -179,8 +179,7 @@ export async function runTool(name, args, deps = {}) {
   }
 }
 
-export function parseToolCall(text) {
-  const s = String(text || "");
+export function parseToolCall(text) {  const s = String(text || "");
   const fence = s.match(/```(?:tool|json)?\s*([\s\S]*?)```/);
   const candidates = [];
   if (fence) candidates.push(fence[1]);
@@ -195,6 +194,8 @@ export function parseToolCall(text) {
   return null;
 }
 
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
 export async function runAgent({ task, model, chatText, genImage, onEvent, isAborted, maxSteps = 8 }) {
   const messages = [
     { role: "user", content: AGENT_INSTRUCTIONS },
@@ -202,9 +203,23 @@ export async function runAgent({ task, model, chatText, genImage, onEvent, isAbo
     { role: "user", content: task },
   ];
   let image = null;
+  async function chatWithRetry(messages, step) {
+    const waits = String(process.env.AGENT_RETRY_WAITS_MS || "15000,30000").split(",").map((x) => Math.max(0, Number(x) || 0));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await chatText(messages, model);
+      } catch (e) {
+        const retryable = e.status === 418 || e.status === 429 || e.status === 502 || e.status === 503 || !e.status;
+        if (!retryable || attempt >= waits.length) throw e;
+        if (onEvent) onEvent({ type: "note", step, text: `Model request fail (HTTP ${e.status || "?"}${e.type ? " " + e.type : ""}) — ${Math.round(waits[attempt] / 1000)}s opekkha kore abar try korchi… (retry ${attempt + 1}/${waits.length})` });
+        await sleepMs(waits[attempt]);
+        if (isAborted && isAborted()) throw new Error("Agent stopped (client disconnected)");
+      }
+    }
+  }
   for (let step = 1; step <= maxSteps; step++) {
     if (isAborted && isAborted()) throw new Error("Agent stopped (client disconnected)");
-    const reply = await chatText(messages, model);
+    const reply = await chatWithRetry(messages, step);
     const call = parseToolCall(reply);
     if (!call) {
       if (onEvent) onEvent({ type: "final", reply, ...(image ? { image } : {}) });

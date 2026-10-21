@@ -270,7 +270,7 @@ const server = http.createServer(async (req, res) => {
           task,
           model,
           chatText: async (messages) => {
-            const out = await enqueueScrape({ message: task, messages, model, image: false, fresh: true });
+            const out = await enqueueScrape({ message: task, messages, model, image: false, fresh: true, systemContext: false });
             return out.reply || "";
           },
           genImage: async (prompt, m) => {

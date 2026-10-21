@@ -333,13 +333,13 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
            debug: { bytes: text.length, events: rich.eventShapes } };
 }
 
-export async function chatViaScrape({ message, messages, model, image = false, imageData, imageMime }) {
+export async function chatViaScrape({ message, messages, model, image = false, imageData, imageMime, systemContext = true }) {
 
   const metadata = image ? { toolChoice: { GenerateImage: true } } : undefined;
   const fe = await scrapeVersions();
   const modelId = MODEL_IDS[model] || model || MODEL_IDS.Luna;
   const baseMsgs = messages || [{ role: "user", content: message }];
-  const rawMsgs = (!image && !imageData) ? withSystemContext(baseMsgs) : baseMsgs;
+  const rawMsgs = (!image && !imageData && systemContext) ? withSystemContext(baseMsgs) : baseMsgs;
   const hasAssistant = rawMsgs.some((m) => (m.role || "user") === "assistant");
   const buildMsgs = (style) => rawMsgs.map((m) => {
     if (typeof m.content !== "string") return m;
