@@ -231,9 +231,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Body variants tried in order when the server answers 400 ERR_BAD_REQUEST.
 // The frontend body always contains `metadata` and `reasoningEffort` keys
 // (values can be empty), which the first version of this client omitted.
+// Order matters: on 2026-10-21 Likhon's first fully successful live run
+// went through on v2 (metadata + reasoningEffort) after v1 hit 418 twice,
+// so v2 is tried first now; v1/v3 remain as fallbacks.
 const BODY_VARIANTS = [
-  { name: "v1-base", extra: {} },
   { name: "v2-meta+reasoning", extra: { metadata: {}, reasoningEffort: "none" } },
+  { name: "v1-base", extra: {} },
   { name: "v3-greeting", extra: { metadata: {}, reasoningEffort: "none", canShowGreeting: true } },
 ];
 
