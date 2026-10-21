@@ -91,7 +91,7 @@ async function send(){
     const r=await fetch(img?'/image':'/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(img?{prompt:message,model}:{message,model})});
     const j=await r.json();
     if(img){
-      log.textContent += (j.images&&j.images.length?('Images: '+j.images.join('  ')):(j.reply?('AI: '+j.reply):('Error '+r.status+': '+(j.error||JSON.stringify(j)))))+'\\n\\n';
+      log.textContent += (j.images&&j.images.length?('Images: '+j.images.join('  ')):(j.reply?('AI: '+j.reply):((r.status===200?'Accepted, but no image/text came back. Debug: ':'Error '+r.status+': ')+JSON.stringify(j.debug||j.error||j)))))+'\\n\\n';
     } else {
       log.textContent += (j.reply?('AI ('+(j.model||model)+'): '+j.reply):('Error '+r.status+': '+(j.error||JSON.stringify(j))))+'\\n\\n';
     }
