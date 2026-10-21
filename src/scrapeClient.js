@@ -214,6 +214,9 @@ export function parseSSE(text) {
 export function parseSSERich(text) {
   let out = "";
   const images = [];
+  let title = null;
+  let revisedPrompt = null;
+  const b64Candidates = [];
   const pushImg = (v) => { if (typeof v === "string" && v && !images.includes(v)) images.push(v); };
   for (const line of text.split(/\r?\n/)) {
     if (!line.startsWith("data:")) continue;
@@ -221,6 +224,17 @@ export function parseSSERich(text) {
     if (!data || data === "[DONE]") continue;
     try {
       const j = JSON.parse(data);
+      // Image generation streams as ui-component events (found live
+      // 2026-10-21): a tool-invocation carries the enhanced prompt, then
+      // image-title and image-partial/final events carry base64 JPEG data.
+      if (j.role === "tool-invocation" && j.toolName === "GenerateImage" && typeof j.toolArguments === "string") {
+        try { revisedPrompt = JSON.parse(j.toolArguments)?.imageGenPrompt || revisedPrompt; } catch {}
+      }
+      if (j.role === "ui-component" && j.name === "generate-image" && j.data) {
+        if (j.data.type === "image-title" && j.data.title) title = j.data.title;
+        if (typeof j.data.b64Image === "string" && j.data.b64Image.length > 100) b64Candidates.push(j.data.b64Image);
+        if (typeof j.data.url === "string") pushImg(j.data.url);
+      }
       const parts = Array.isArray(j.content) ? j.content : Array.isArray(j.parts) ? j.parts : [];
       if (typeof j.message === "string") out += j.message;
       for (const part of parts) {
@@ -232,12 +246,18 @@ export function parseSSERich(text) {
       }
     } catch { /* keep-alives / non-JSON lines */ }
   }
+  if (b64Candidates.length) {
+    // Partials arrive first; the final image is the longest payload.
+    const best = b64Candidates.reduce((a, b) => (b.length > a.length ? b : a));
+    const mime = best.startsWith("/9j/") ? "image/jpeg" : best.startsWith("iVBOR") ? "image/png" : "image/jpeg";
+    images.unshift(`data:${mime};base64,${best}`);
+  }
   for (const m of out.matchAll(/!\[[^\]]*\]\((https?:[^)\s]+)\)/g)) pushImg(m[1]);
   for (const m of text.matchAll(/https?:[^\s"')]+?\.(?:png|jpe?g|webp)(?:\?[^\s"')]*)?/gi)) pushImg(m[0]);
   // Generated images may be referenced by id/URL without a file extension
   for (const m of text.matchAll(/https?:[^\s"')]*duckchat[^\s"')]*\/(?:file|image|generated)[^\s"')]*/gi)) pushImg(m[0]);
   for (const m of text.matchAll(/data:image\/[a-z]+;base64,[A-Za-z0-9+/=]{40,}/g)) pushImg(m[0].slice(0, 80) + "…(base64)");
-  return { text: out, images, eventShapes: summarizeEvents(text) };
+  return { text: out, images, title, revisedPrompt, eventShapes: summarizeEvents(text) };
 }
 
 // Compact map of what the stream actually contained — used to debug empty
@@ -350,7 +370,8 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
   }
   LAST_RAW = { at: new Date().toISOString(), model: modelId, image: !!metadata?.toolChoice, variant: variant.name, text };
   const rich = parseSSERich(text);
-  return { model: modelId, reply: rich.text, images: rich.images, mode: "scrape",
+  return { model: modelId, reply: rich.text, images: rich.images, title: rich.title,
+           revised_prompt: rich.revisedPrompt, mode: "scrape",
            debug: { bytes: text.length, events: rich.eventShapes } };
 }
 

@@ -144,7 +144,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { model, reply, mode: MODE });
       }
       const out = await enqueueScrape({ message: text, model, image: isImage });
-      if (isImage) return json(res, 200, { model: out.model, prompt: text, images: out.images || [], reply: out.reply, debug: out.debug });
+      if (isImage) return json(res, 200, { model: out.model, prompt: text, images: out.images || [], title: out.title || undefined, revised_prompt: out.revised_prompt || undefined, reply: out.reply, debug: out.debug });
       return json(res, 200, { model: out.model, reply: out.reply, variant: out.variant });
     }
 
@@ -234,8 +234,9 @@ const server = http.createServer(async (req, res) => {
       const out = await enqueueScrape({ message: body.prompt, model: body.model || "Luna", image: true });
       return json(res, 200, {
         created: Math.floor(Date.now() / 1000),
-        data: (out.images || []).map((url) => ({ url })),
-        reply: out.reply || undefined,
+        data: (out.images || []).map((img) => img.startsWith("data:")
+          ? { b64_json: img.split(",", 2)[1], revised_prompt: out.revised_prompt || undefined }
+          : { url: img, revised_prompt: out.revised_prompt || undefined }),
       });
     }
 
@@ -245,7 +246,7 @@ const server = http.createServer(async (req, res) => {
       const model = body.model || process.env.DUCK_MODEL || "Luna";
       if (MODE !== "scrape") return json(res, 400, { error: "Image generation needs DUCK_MODE=scrape" });
       const out = await enqueueScrape({ message: prompt, model, image: true });
-      return json(res, 200, { model: out.model, prompt, images: out.images || [], reply: out.reply, mode: "scrape", variant: out.variant, debug: out.debug });
+      return json(res, 200, { model: out.model, prompt, images: out.images || [], title: out.title || undefined, revised_prompt: out.revised_prompt || undefined, reply: out.reply, mode: "scrape", variant: out.variant, debug: out.debug });
     }
     return json(res, 404, { error: "Not found. Try GET /health, GET /models, GET /scrape-status, POST /chat, POST /image" });
   } catch (e) {
