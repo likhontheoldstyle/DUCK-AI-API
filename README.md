@@ -95,3 +95,23 @@ No tokens to manage: every chat call scrapes the current frontend version
 (Phase 2), then sends the chat with freshly generated journey/response IDs
 (Phase 3). On 418 it retries with a fresh challenge; on 400 it tries the
 next body variant.
+
+## OpenAI-compatible API format (v1.1)
+
+Standard endpoints, so any app/tool that accepts an OpenAI base URL works
+(point it at `http://localhost:3000/v1`, API key can be anything):
+
+```bash
+curl http://localhost:3000/v1/chat/completions -H 'content-type: application/json' -d '{
+  "model": "gpt-6-luna",
+  "messages": [{"role": "user", "content": "hi"}]
+}'
+curl http://localhost:3000/v1/models
+curl -X POST http://localhost:3000/v1/images/generations -H 'content-type: application/json' \
+  -d '{"prompt": "a cat astronaut in space"}'
+```
+
+- `model` accepts friendly names (`Luna`, `Terra`, `Claude Sonnet`, ...) or raw ids (`gpt-6-luna`, ...).
+- `"stream": true` is supported (SSE chunks, OpenAI shape).
+- Python example with the official SDK: `examples/call_openai_sdk.py`.
+- The original simple endpoints (`POST /chat`, `POST /image`) still work too.

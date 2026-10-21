@@ -146,8 +146,75 @@ const server = http.createServer(async (req, res) => {
       const reply = message.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${model}] You said: ${message}`;
       return json(res, 200, { model, reply, mode: "mock" });
     }
-    if (req.method === "POST" && req.url === "/image") {
+    // ---------- OpenAI-compatible API format ----------
+    if (req.method === "GET" && req.url === "/v1/models") {
+      const data = Object.entries(MODEL_IDS).map(([name, id]) => ({
+        id, object: "model", created: 0, owned_by: "duck.ai", name,
+      }));
+      return json(res, 200, { object: "list", data });
+    }
+
+    if (req.method === "POST" && req.url === "/v1/chat/completions") {
       const body = await readBody(req);
+      const oaiError = (status, message, code) =>
+        json(res, status, { error: { message, type: "invalid_request_error", code: code || null } });
+      if (!Array.isArray(body.messages) || !body.messages.length) {
+        return oaiError(400, 'Send {"model":"gpt-6-luna","messages":[{"role":"user","content":"hi"}]}');
+      }
+      // Accept friendly names ("Luna") and raw ids ("gpt-6-luna") alike
+      const modelIn = body.model || "Luna";
+      const modelName = MODEL_IDS[modelIn] ? modelIn
+        : Object.keys(MODEL_IDS).find((k) => MODEL_IDS[k] === modelIn) || modelIn;
+      const messages = body.messages.map((m) => ({
+        role: m.role || "user",
+        content: typeof m.content === "string" ? m.content
+          : Array.isArray(m.content) ? m.content.filter((p) => p?.type === "text").map((p) => p.text).join("") : "",
+      }));
+      const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content || "";
+
+      let out;
+      if (MODE === "scrape") {
+        out = await enqueueScrape({ message: lastUser, messages, model: modelName, image: false });
+      } else if (MODE === "browser") {
+        const b = await chatViaBrowser({ message: lastUser, model: modelName });
+        out = { model: MODEL_IDS[modelName] || modelName, reply: b.reply };
+      } else {
+        out = { model: MODEL_IDS[modelName] || modelName, reply: lastUser.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${modelName}] You said: ${lastUser}` };
+      }
+      const modelId = MODEL_IDS[modelName] || out.model || modelName;
+      const id = "chatcmpl-" + Math.random().toString(36).slice(2, 24);
+      const created = Math.floor(Date.now() / 1000);
+      if (body.stream) {
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+        const chunk = (delta, finish) => "data: " + JSON.stringify({
+          id, object: "chat.completion.chunk", created, model: modelId,
+          choices: [{ index: 0, delta, finish_reason: finish }],
+        }) + "\n\n";
+        res.write(chunk({ role: "assistant", content: "" }, null));
+        res.write(chunk({ content: out.reply || "" }, null));
+        res.write(chunk({}, "stop"));
+        return res.end("data: [DONE]\n\n");
+      }
+      return json(res, 200, {
+        id, object: "chat.completion", created, model: modelId,
+        choices: [{ index: 0, message: { role: "assistant", content: out.reply || "" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      });
+    }
+
+    if (req.method === "POST" && req.url === "/v1/images/generations") {
+      const body = await readBody(req);
+      if (!body.prompt) return json(res, 400, { error: { message: 'Send {"prompt":"a cat in space"}', type: "invalid_request_error", code: null } });
+      if (MODE !== "scrape") return json(res, 400, { error: { message: "Image generation needs DUCK_MODE=scrape", type: "invalid_request_error", code: null } });
+      const out = await enqueueScrape({ message: body.prompt, model: body.model || "Luna", image: true });
+      return json(res, 200, {
+        created: Math.floor(Date.now() / 1000),
+        data: (out.images || []).map((url) => ({ url })),
+        reply: out.reply || undefined,
+      });
+    }
+
+    if (req.method === "POST" && req.url === "/image") {      const body = await readBody(req);
       const prompt = body.prompt || body.message;
       if (!prompt) return json(res, 400, { error: 'Send {"prompt":"a cat in space"}' });
       const model = body.model || process.env.DUCK_MODEL || "Luna";
