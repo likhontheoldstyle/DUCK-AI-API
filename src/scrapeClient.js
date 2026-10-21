@@ -323,14 +323,17 @@ export async function chatViaScrape({ message, messages, model, image = false, i
       ? { role: m.role || "user", content: [{ type: "text", text: m.content }] }
       : m
   );
+  let imgShapes = null;
   if (imageData) {
     const mime = imageMime || (imageData.startsWith("data:") ? imageData.slice(5, imageData.indexOf(";")) : "image/jpeg");
     const uri = imageData.startsWith("data:") ? imageData : `data:${mime};base64,${imageData}`;
+    const raw = uri.slice(uri.indexOf(",") + 1);
     const text = typeof message === "string" && message ? message : "Edit this image";
-    msgs = [{ role: "user", content: [
+    imgShapes = [
       { type: "image", mimeType: mime, image: uri },
-      { type: "text", text },
-    ] }];
+      { type: "image", mimeType: mime, image: raw },
+    ];
+    msgs = [{ role: "user", content: [imgShapes[0], { type: "text", text }] }];
   }
 
   const retriesPerVariant = Math.max(1, Number(process.env.DUCK_RETRIES || 2));
@@ -339,7 +342,14 @@ export async function chatViaScrape({ message, messages, model, image = false, i
   for (const variant of variants) {
     for (let attempt = 1; attempt <= retriesPerVariant; attempt++) {
       try {
-        const out = await chatAttempt({ msgs, modelId, fe, variant, metadata });
+        let useMsgs = msgs;
+        if (imgShapes) {
+          const shape = imgShapes[(attempt - 1) % imgShapes.length];
+          const parts = attempt >= 3 ? [msgs[0].content[1], shape] : [shape, msgs[0].content[1]];
+          useMsgs = [{ role: "user", content: parts }];
+          console.log(`[duck-ai-api] image part shape ${(attempt - 1) % imgShapes.length} (${shape.image.startsWith("data:") ? "data-url" : "raw-b64"})`);
+        }
+        const out = await chatAttempt({ msgs: useMsgs, modelId, fe, variant, metadata });
         console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> OK`);
         out.variant = variant.name;
         out.attempts = attempt;
