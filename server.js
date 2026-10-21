@@ -8,6 +8,48 @@ const MODE = process.env.DUCK_MODE || "scrape"; // scrape (default) | mock | bro
 
 const CAPTURED = { model: "Luna", message: "hi", response: "Hi! How can I help?" };
 
+// --- Upstream politeness layer (respects duck.ai's limits, never evades) ---
+// 1) Serial queue + minimum gap between upstream calls (no bursts).
+// 2) Short-lived cache so repeat questions don't spend quota.
+// 3) On 429: wait (default 60s, DUCK_429_WAIT_MS) and retry ONCE — the
+//    server absorbs the wait so callers just see a slower success.
+const MIN_INTERVAL_MS = Number(process.env.DUCK_MIN_INTERVAL_MS || 3000);
+const CACHE_TTL_MS = Number(process.env.DUCK_CACHE_TTL_MS || 600_000);
+const WAIT_429_MS = Number(process.env.DUCK_429_WAIT_MS || 60_000);
+const _cache = new Map();
+let _queue = Promise.resolve();
+let _lastCallAt = 0;
+const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function enqueueScrape(args) {
+  const key = JSON.stringify([args.model, args.image ? 1 : 0, args.messages || args.message]);
+  const hit = _cache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return Promise.resolve({ ...hit.out, cached: true });
+  const run = async () => {
+    const gap = MIN_INTERVAL_MS - (Date.now() - _lastCallAt);
+    if (gap > 0) await _sleep(gap);
+    try {
+      _lastCallAt = Date.now();
+      const out = await chatViaScrape(args);
+      _cache.set(key, { at: Date.now(), out });
+      return out;
+    } catch (e) {
+      if (e.status === 429 && WAIT_429_MS > 0) {
+        console.log(`[duck-ai-api] 429 rate limit — waiting ${Math.round(WAIT_429_MS / 1000)}s, then one retry`);
+        await _sleep(WAIT_429_MS);
+        _lastCallAt = Date.now();
+        const out = await chatViaScrape(args);
+        _cache.set(key, { at: Date.now(), out });
+        return out;
+      }
+      throw e;
+    }
+  };
+  const p = _queue.then(run, run);
+  _queue = p.catch(() => {});
+  return p;
+}
+
 function json(res, status, body) {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body, null, 2));
@@ -35,18 +77,24 @@ input,select,button{font-size:16px;padding:8px} #msg{width:70%}</style></head>
 <div id="log"></div>
 <p><input id="msg" placeholder="Type your message, e.g. hi">
 <select id="model"><option>Luna</option><option>Terra</option><option>Claude Sonnet</option><option>Claude Haiku</option><option>GPT-5.4 mini</option><option>Mistral</option></select>
+<label><input type="checkbox" id="imgmode"> 🖼 Image</label>
 <button id="send">Send</button></p>
-<p style="color:#555">API endpoints: GET /health &nbsp; GET /models &nbsp; GET /scrape-status &nbsp; POST /chat</p>
+<p style="color:#555">API endpoints: GET /health &nbsp; GET /models &nbsp; GET /scrape-status &nbsp; POST /chat &nbsp; POST /image</p>
 <script>
 const log=document.getElementById('log');
 async function send(){
   const message=document.getElementById('msg').value.trim(); if(!message) return;
   const model=document.getElementById('model').value;
-  log.textContent += 'You: '+message+'\\nWaiting...\\n';
+  const img=document.getElementById('imgmode').checked;
+  log.textContent += 'You: '+message+(img?' [image]':'')+'\\nWaiting...\\n';
   try{
-    const r=await fetch('/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message,model})});
+    const r=await fetch(img?'/image':'/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(img?{prompt:message,model}:{message,model})});
     const j=await r.json();
-    log.textContent += (j.reply?('AI ('+(j.model||model)+'): '+j.reply):('Error '+r.status+': '+(j.error||JSON.stringify(j))))+'\\n\\n';
+    if(img){
+      log.textContent += (j.images&&j.images.length?('Images: '+j.images.join('  ')):(j.reply?('AI: '+j.reply):('Error '+r.status+': '+(j.error||JSON.stringify(j)))))+'\\n\\n';
+    } else {
+      log.textContent += (j.reply?('AI ('+(j.model||model)+'): '+j.reply):('Error '+r.status+': '+(j.error||JSON.stringify(j))))+'\\n\\n';
+    }
   }catch(e){ log.textContent += 'Error: '+e.message+'\\n\\n'; }
 }
 document.getElementById('send').onclick=send;
@@ -82,7 +130,7 @@ const server = http.createServer(async (req, res) => {
       const model = body.model || process.env.DUCK_MODEL || "Luna";
 
       if (MODE === "scrape") {
-        const out = await chatViaScrape({ message, messages: body.messages, model });
+        const out = await enqueueScrape({ message, messages: body.messages, model, image: !!body.image });
         return json(res, 200, out);
       }
       if (MODE === "browser") {
@@ -98,7 +146,16 @@ const server = http.createServer(async (req, res) => {
       const reply = message.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${model}] You said: ${message}`;
       return json(res, 200, { model, reply, mode: "mock" });
     }
-    return json(res, 404, { error: "Not found. Try GET /health, GET /models, GET /scrape-status, POST /chat" });
+    if (req.method === "POST" && req.url === "/image") {
+      const body = await readBody(req);
+      const prompt = body.prompt || body.message;
+      if (!prompt) return json(res, 400, { error: 'Send {"prompt":"a cat in space"}' });
+      const model = body.model || process.env.DUCK_MODEL || "Luna";
+      if (MODE !== "scrape") return json(res, 400, { error: "Image generation needs DUCK_MODE=scrape" });
+      const out = await enqueueScrape({ message: prompt, model, image: true });
+      return json(res, 200, { model: out.model, prompt, images: out.images || [], reply: out.reply, mode: "scrape", variant: out.variant });
+    }
+    return json(res, 404, { error: "Not found. Try GET /health, GET /models, GET /scrape-status, POST /chat, POST /image" });
   } catch (e) {
     const status = ["PLAYWRIGHT_MISSING", "JSDOM_MISSING", "MISSING_UPSTREAM_HEADERS"].includes(e.code) ? 501
       : e.code === "CHAT_REJECTED" ? e.status || 502 : 500;

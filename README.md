@@ -68,3 +68,30 @@ curl -X POST http://localhost:3000/chat -H 'content-type: application/json' \
 - `src/duckClient.js` — model list + upstream shape
 - `capture.json` — live capture + scrape research, sources shoho
 - `examples/` — Python / JS theke call korar example
+
+## Image generation (v1.0)
+
+```bash
+curl -X POST http://localhost:3000/image -H 'content-type: application/json' \
+  -d '{"prompt":"a cat astronaut in space"}'
+# -> { "images": ["https://..."], "reply": "...", ... }
+```
+Same upstream call as chat, with `metadata: {toolChoice: {GenerateImage: true}}`
+(the frontend's own image mode). The chat test page has a 🖼 Image checkbox too.
+
+## Built-in politeness (rate-limit friendly)
+
+- Requests are serialized with a minimum gap (`DUCK_MIN_INTERVAL_MS`, default 3000).
+- Repeat questions are cached for 10 min (`DUCK_CACHE_TTL_MS`) — no quota spent.
+- On HTTP 429 the server waits (`DUCK_429_WAIT_MS`, default 60000) and retries
+  once automatically. It never tries to evade DuckDuckGo's limits.
+- Device profile auto-matches the host: Android UA on Termux/Android,
+  Windows UA elsewhere (`DUCK_UA` overrides).
+
+## Token flow (all automatic)
+
+No tokens to manage: every chat call scrapes the current frontend version
+(Phase 1), fetches a fresh anti-abuse challenge and solves it in a sandbox
+(Phase 2), then sends the chat with freshly generated journey/response IDs
+(Phase 3). On 418 it retries with a fresh challenge; on 400 it tries the
+next body variant.

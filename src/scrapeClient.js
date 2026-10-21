@@ -194,20 +194,36 @@ export function buildFeSignals(startedAt, events = []) {
 }
 
 export function parseSSE(text) {
+  return parseSSERich(text).text;
+}
+
+// Richer parse: text plus any generated images found in the stream.
+// Image parts arrive as content parts like {type:"image", image|url|dataUrl}
+// or as markdown image links inside text parts.
+export function parseSSERich(text) {
   let out = "";
+  const images = [];
+  const pushImg = (v) => { if (typeof v === "string" && v && !images.includes(v)) images.push(v); };
   for (const line of text.split(/\r?\n/)) {
     if (!line.startsWith("data:")) continue;
     const data = line.slice(5).trim();
     if (!data || data === "[DONE]") continue;
     try {
       const j = JSON.parse(data);
+      const parts = Array.isArray(j.content) ? j.content : Array.isArray(j.parts) ? j.parts : [];
       if (typeof j.message === "string") out += j.message;
-      else if (Array.isArray(j.content)) {
-        for (const part of j.content) if (part?.type === "text" && typeof part.text === "string") out += part.text;
+      for (const part of parts) {
+        if (!part) continue;
+        if (part.type === "text" && typeof part.text === "string") out += part.text;
+        if (part.type === "image" || part.type === "generated_image") {
+          pushImg(part.image || part.url || part.dataUrl || part.src);
+        }
       }
     } catch { /* keep-alives / non-JSON lines */ }
   }
-  return out;
+  for (const m of out.matchAll(/!\[[^\]]*\]\((https?:[^)\s]+)\)/g)) pushImg(m[1]);
+  for (const m of text.matchAll(/https?:[^\s"')]+?\.(?:png|jpe?g|webp)(?:\?[^\s"')]*)?/gi)) pushImg(m[0]);
+  return { text: out, images };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -221,7 +237,7 @@ const BODY_VARIANTS = [
   { name: "v3-greeting", extra: { metadata: {}, reasoningEffort: "none", canShowGreeting: true } },
 ];
 
-async function chatAttempt({ msgs, modelId, fe, variant }) {
+async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
   const startedAt = Date.now();
   const journeyId = newJourneyId();
   const { jsa } = await getChallenge(fe, journeyId);
@@ -258,7 +274,7 @@ async function chatAttempt({ msgs, modelId, fe, variant }) {
     },
     body: JSON.stringify({
       model: modelId,
-      ...(variant.extra.metadata !== undefined ? { metadata: variant.extra.metadata } : {}),
+      ...((variant.extra.metadata !== undefined || metadata) ? { metadata: { ...(variant.extra.metadata || {}), ...(metadata || {}) } } : {}),
       messages: msgs,
       canUseTools: true,
       ...(variant.extra.reasoningEffort !== undefined ? { reasoningEffort: variant.extra.reasoningEffort } : {}),
@@ -279,10 +295,14 @@ async function chatAttempt({ msgs, modelId, fe, variant }) {
     err.type = type;
     throw err;
   }
-  return { model: modelId, reply: parseSSE(text), mode: "scrape" };
+  const rich = parseSSERich(text);
+  return { model: modelId, reply: rich.text, images: rich.images, mode: "scrape" };
 }
 
-export async function chatViaScrape({ message, messages, model }) {
+export async function chatViaScrape({ message, messages, model, image = false }) {
+  // Image generation is the same chat call with a toolChoice metadata —
+  // reverse-engineered from the frontend bundle: metadata:{toolChoice:{GenerateImage:true}}
+  const metadata = image ? { toolChoice: { GenerateImage: true } } : undefined;
   const fe = await scrapeVersions();
   const modelId = MODEL_IDS[model] || model || MODEL_IDS.Luna;
   const msgs = (messages || [{ role: "user", content: message }]).map((m) =>
@@ -300,7 +320,7 @@ export async function chatViaScrape({ message, messages, model }) {
   for (const variant of BODY_VARIANTS) {
     for (let attempt = 1; attempt <= retriesPerVariant; attempt++) {
       try {
-        const out = await chatAttempt({ msgs, modelId, fe, variant });
+        const out = await chatAttempt({ msgs, modelId, fe, variant, metadata });
         console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> OK`);
         out.variant = variant.name;
         out.attempts = attempt;
