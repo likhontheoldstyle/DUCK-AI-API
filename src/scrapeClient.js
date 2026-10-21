@@ -1,30 +1,3 @@
-// Scrape backend for duck.ai — direct HTTP, NO browser automation.
-// Request shape reverse-engineered from duck.ai's own JS bundle
-// (entry.duckai.*.js, scraped 2026-10-20) and verified phase by phase.
-//
-//   Phase 1 — GET https://duck.ai/
-//             Scrape <html data-version-tag data-version-sha>
-//             -> x-fe-version = "<tag>-<sha>"
-//   Phase 2 — GET https://duck.ai/duckchat/v1/status
-//             headers: x-vqd-accept: 1, x-ddg-journey-id: <32 hex>
-//             Response header X-Vqd-Hash-1 = base64 JS challenge.
-//             Solver (frontend module "wR"): run the challenge, then
-//               client_hashes := SHA-256(each) as base64,
-//               meta += { origin, stack, duration },
-//               header value := btoa(JSON.stringify(result))
-//   Phase 3 — POST https://duck.ai/duckchat/v1/chat  (SSE)
-//             headers: X-Vqd-Hash-1: <solved jsa>, x-fe-version,
-//                      x-fe-signals: btoa(JSON({start, events, end})),
-//                      x-ddg-journey-id, x-duckai-response-id, ...
-//             body: { model: "gpt-6-luna",
-//                     messages: [{ role:"user",
-//                                  content:[{type:"text", text}] }],
-//                     canUseTools, canUseWebSearch, ... }
-//
-// Environment note: on the Muse sandbox VM outbound POSTs are held by
-// the egress proxy (a POST to example.com times out too, while GETs and
-// a POST to duckduckgo.com work). Run this on a normal network.
-
 import crypto from "node:crypto";
 
 const UA_WINDOWS =
@@ -32,10 +5,6 @@ const UA_WINDOWS =
 const UA_ANDROID =
   "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36";
 
-// Device profile: the UA, client-hints and the sandbox's navigator values
-// must all tell the SAME story — a Windows UA sent from an Android phone
-// (Termux) is a fingerprint mismatch that can hurt the challenge verdict.
-// Auto-picked by platform; override with DUCK_UA (and DUCK_NAV_PLATFORM).
 export function deviceProfile() {
   if (process.env.DUCK_UA) {
     return {
@@ -79,10 +48,6 @@ const BASE_HEADERS = {
   "sec-fetch-site": "same-origin",
 };
 
-// Transport: prefer impit (Chrome TLS/HTTP2 impersonation) when installed —
-// a plain Node fetch has a Node TLS fingerprint, which challenge systems
-// can tell apart from the Chrome UA we claim (a likely cause of 418).
-// Falls back to global fetch if impit is unavailable.
 let _transport = null;
 export async function getTransport() {
   if (_transport) return _transport;
@@ -99,13 +64,6 @@ export async function getTransport() {
   return _transport;
 }
 
-// Model IDs scraped from duck.ai's own model list in its JS bundle
-// (2026-10-20). NOTE: Luna's id is "gpt-6-luna" — the older "gpt-5.6-luna"
-// id was replaced and the server rejects it with 400 ERR_BAD_REQUEST.
-// availableTo tiers scraped from the bundle's model list (2026-10-21).
-// Free tier: Luna, GPT-5.4 mini, Claude Haiku, Mistral, gpt-oss, Gemma.
-// Terra / Claude Sonnet / Sol / Opus need a paid DuckDuckGo subscription —
-// the server answers 404 ERR_MODEL_RESTRICTED for them on free accounts.
 export const MODEL_IDS = {
   Luna: "gpt-6-luna",
   "GPT-5.4 mini": "gpt-5.4-mini",
@@ -118,12 +76,11 @@ export const MODEL_IDS = {
 };
 export const PAID_MODELS = ["Terra", "Claude Sonnet"];
 
-// Last raw upstream stream, kept for debugging (GET /debug-last)
 export let LAST_RAW = null;
 export function getLastRaw() { return LAST_RAW; }
 
 export function newJourneyId() {
-  return crypto.randomBytes(16).toString("hex"); // frontend: x-ddg-journey-id
+  return crypto.randomBytes(16).toString("hex");
 }
 
 export async function scrapeVersions() {
@@ -154,7 +111,7 @@ async function solveChallenge(challengeB64, fe) {
     pretendToBeVisual: true,
     userAgent: PROFILE.ua,
   });
-  // Make the sandbox report the same UA we send on the wire
+
   try {
     Object.defineProperty(dom.window.navigator, "userAgent", { get: () => PROFILE.ua });
     Object.defineProperty(dom.window.navigator, "platform", { get: () => PROFILE.navPlatform });
@@ -167,7 +124,6 @@ async function solveChallenge(challengeB64, fe) {
   dom.window.close();
   if (!raw || !("client_hashes" in raw)) throw new Error("Phase 2: challenge result missing client_hashes");
 
-  // The frontend solver transforms the raw result before sending it:
   const clientHashes = await Promise.all(
     raw.client_hashes.map(async (h) =>
       crypto.createHash("sha256").update(String(h)).digest().toString("base64"))
@@ -208,9 +164,6 @@ export function parseSSE(text) {
   return parseSSERich(text).text;
 }
 
-// Richer parse: text plus any generated images found in the stream.
-// Image parts arrive as content parts like {type:"image", image|url|dataUrl}
-// or as markdown image links inside text parts.
 export function parseSSERich(text) {
   let out = "";
   const images = [];
@@ -224,9 +177,7 @@ export function parseSSERich(text) {
     if (!data || data === "[DONE]") continue;
     try {
       const j = JSON.parse(data);
-      // Image generation streams as ui-component events (found live
-      // 2026-10-21): a tool-invocation carries the enhanced prompt, then
-      // image-title and image-partial/final events carry base64 JPEG data.
+
       if (j.role === "tool-invocation" && j.toolName === "GenerateImage" && typeof j.toolArguments === "string") {
         try { revisedPrompt = JSON.parse(j.toolArguments)?.imageGenPrompt || revisedPrompt; } catch {}
       }
@@ -244,24 +195,22 @@ export function parseSSERich(text) {
           pushImg(part.image || part.url || part.dataUrl || part.src);
         }
       }
-    } catch { /* keep-alives / non-JSON lines */ }
+    } catch {  }
   }
   if (b64Candidates.length) {
-    // Partials arrive first; the final image is the longest payload.
+
     const best = b64Candidates.reduce((a, b) => (b.length > a.length ? b : a));
     const mime = best.startsWith("/9j/") ? "image/jpeg" : best.startsWith("iVBOR") ? "image/png" : "image/jpeg";
     images.unshift(`data:${mime};base64,${best}`);
   }
   for (const m of out.matchAll(/!\[[^\]]*\]\((https?:[^)\s]+)\)/g)) pushImg(m[1]);
   for (const m of text.matchAll(/https?:[^\s"')]+?\.(?:png|jpe?g|webp)(?:\?[^\s"')]*)?/gi)) pushImg(m[0]);
-  // Generated images may be referenced by id/URL without a file extension
+
   for (const m of text.matchAll(/https?:[^\s"')]*duckchat[^\s"')]*\/(?:file|image|generated)[^\s"')]*/gi)) pushImg(m[0]);
   for (const m of text.matchAll(/data:image\/[a-z]+;base64,[A-Za-z0-9+/=]{40,}/g)) pushImg(m[0].slice(0, 80) + "…(base64)");
   return { text: out, images, title, revisedPrompt, eventShapes: summarizeEvents(text) };
 }
 
-// Compact map of what the stream actually contained — used to debug empty
-// replies (e.g. image generation) without dumping the whole stream.
 export function summarizeEvents(text) {
   const shapes = new Map();
   for (const line of text.split(/\r?\n/)) {
@@ -281,22 +230,13 @@ export function summarizeEvents(text) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Body variants tried in order when the server answers 400 ERR_BAD_REQUEST.
-// The frontend body always contains `metadata` and `reasoningEffort` keys
-// (values can be empty), which the first version of this client omitted.
-// Order matters: on 2026-10-21 Likhon's first fully successful live run
-// went through on v2 (metadata + reasoningEffort) after v1 hit 418 twice,
-// so v2 is tried first now; v1/v3 remain as fallbacks.
+
 const BODY_VARIANTS = [
   { name: "v2-meta+reasoning", extra: { metadata: {}, reasoningEffort: "none" } },
   { name: "v1-base", extra: {} },
   { name: "v3-greeting", extra: { metadata: {}, reasoningEffort: "none", canShowGreeting: true } },
 ];
 
-// gpt-oss (tinfoil) differs from the other models in the bundle's config:
-// its only supported reasoning effort is "low", and for encrypted models
-// the frontend sends canUseWebSearch / canUploadFiles as null (no stored
-// preference) instead of true. Plain requests were rejected with 400.
 const OSS_VARIANTS = [
   { name: "oss-low-null", extra: { metadata: {}, reasoningEffort: "low", canUseWebSearch: null, canUploadFiles: null } },
   { name: "oss-low", extra: { metadata: {}, reasoningEffort: "low" } },
@@ -308,8 +248,6 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
   const journeyId = newJourneyId();
   const { jsa } = await getChallenge(fe, journeyId);
 
-  // Human-like pacing: a real browser loads the page, solves the challenge,
-  // and only sends the chat a few seconds later. Signals must match that.
   const elapsed = Date.now() - startedAt;
   if (elapsed < 2600) await sleep(2600 - elapsed + Math.floor(Math.random() * 700));
 
@@ -376,8 +314,7 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
 }
 
 export async function chatViaScrape({ message, messages, model, image = false }) {
-  // Image generation is the same chat call with a toolChoice metadata —
-  // reverse-engineered from the frontend bundle: metadata:{toolChoice:{GenerateImage:true}}
+
   const metadata = image ? { toolChoice: { GenerateImage: true } } : undefined;
   const fe = await scrapeVersions();
   const modelId = MODEL_IDS[model] || model || MODEL_IDS.Luna;
@@ -387,10 +324,6 @@ export async function chatViaScrape({ message, messages, model, image = false })
       : m
   );
 
-  // Observed live: the challenge verdict is inconsistent — the same flow
-  // sometimes gets 418 ERR_CHALLENGE and sometimes passes. So for each body
-  // variant: retry on 418 with a fresh journey + fresh challenge; on 400
-  // move to the next variant; any success reports which variant worked.
   const retriesPerVariant = Math.max(1, Number(process.env.DUCK_RETRIES || 2));
   const variants = modelId === "tinfoil/gpt-oss-120b" ? OSS_VARIANTS : BODY_VARIANTS;
   let lastErr;
@@ -405,7 +338,7 @@ export async function chatViaScrape({ message, messages, model, image = false })
       } catch (e) {
         lastErr = e;
         console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> HTTP ${e.status || "?"} ${e.type || ""}`);
-        if (e.status === 400) break; // deterministic for this variant; try next
+        if (e.status === 400) break;
         if (e.status !== 418 || attempt === retriesPerVariant) {
           if (e.status !== 418) throw e;
           break;

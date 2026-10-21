@@ -1,5 +1,3 @@
-# Use DUCK-AI-API from the OpenAI Python SDK (or any OpenAI-compatible tool)
-# pip install openai
 from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:3000/v1", api_key="not-needed")

@@ -1,12 +1,3 @@
-// Upstream shape documented from public sources + the captured session.
-// See capture.json for sources and dates.
-//
-// IMPORTANT: Duck.ai has no official public API. Its web chat uses
-// ephemeral anti-abuse challenge headers (x-vqd-hash-1, x-fe-version)
-// that rotate per session. This client does NOT solve that challenge,
-// does NOT extract browser cookies/tokens, and does NOT bypass it.
-// In `upstream` mode it only sends headers YOU supply manually via env.
-
 export const KNOWN_MODELS = [
   { id: "Luna", label: "GPT-6 Luna (observed in captured session)" },
 ];

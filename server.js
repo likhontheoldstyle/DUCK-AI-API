@@ -4,15 +4,10 @@ import { chatViaBrowser } from "./src/browserClient.js";
 import { chatViaScrape, scrapeVersions, getChallenge, newJourneyId, getTransport, MODEL_IDS, PROFILE, getLastRaw } from "./src/scrapeClient.js";
 
 const PORT = Number(process.env.PORT || 3000);
-const MODE = process.env.DUCK_MODE || "scrape"; // scrape (default) | mock | browser | upstream
+const MODE = process.env.DUCK_MODE || "scrape";
 
 const CAPTURED = { model: "Luna", message: "hi", response: "Hi! How can I help?" };
 
-// --- Upstream politeness layer (respects duck.ai's limits, never evades) ---
-// 1) Serial queue + minimum gap between upstream calls (no bursts).
-// 2) Short-lived cache so repeat questions don't spend quota.
-// 3) On 429: wait (default 60s, DUCK_429_WAIT_MS) and retry ONCE — the
-//    server absorbs the wait so callers just see a slower success.
 const MIN_INTERVAL_MS = Number(process.env.DUCK_MIN_INTERVAL_MS || 3000);
 const CACHE_TTL_MS = Number(process.env.DUCK_CACHE_TTL_MS || 600_000);
 const WAIT_429_MS = Number(process.env.DUCK_429_WAIT_MS || 60_000);
@@ -122,15 +117,13 @@ const server = http.createServer(async (req, res) => {
       return res.end(`at=${raw.at} model=${raw.model} image=${raw.image} variant=${raw.variant} bytes=${raw.text.length}\n\n${raw.text.slice(0, 60000)}`);
     }
     if (req.method === "GET" && req.url === "/scrape-status") {
-      // Diagnostics: run Phase 1 + 2 live and show what was scraped (no chat sent)
+
       const fe = await scrapeVersions();
       const ch = await getChallenge(fe, newJourneyId());
       const transport = (await getTransport()).kind;
       return json(res, 200, { transport, deviceProfile: PROFILE.name, userAgent: PROFILE.ua, phase1: fe, phase2: { statusBody: ch.statusBody, jsaLength: ch.jsa.length, jsaPrefix: ch.jsa.slice(0, 24) + "…" } });
     }
 
-    // ---------- Simple GET API (paste link in browser) ----------
-    // GET /chat?message=hi&model=Luna   |   GET /image?prompt=a+cat
     if (req.method === "GET" && (req.url.startsWith("/chat?") || req.url.startsWith("/image?"))) {
       const u = new URL(req.url, "http://localhost");
       const model = u.searchParams.get("model") || process.env.DUCK_MODEL || "Luna";
@@ -171,7 +164,7 @@ const server = http.createServer(async (req, res) => {
       const reply = message.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${model}] You said: ${message}`;
       return json(res, 200, { model, reply, mode: "mock" });
     }
-    // ---------- OpenAI-compatible API format ----------
+
     if (req.method === "GET" && req.url === "/v1/models") {
       const data = Object.entries(MODEL_IDS).map(([name, id]) => ({
         id, object: "model", created: 0, owned_by: "duck.ai", name,
@@ -186,7 +179,7 @@ const server = http.createServer(async (req, res) => {
       if (!Array.isArray(body.messages) || !body.messages.length) {
         return oaiError(400, 'Send {"model":"gpt-6-luna","messages":[{"role":"user","content":"hi"}]}');
       }
-      // Accept friendly names ("Luna") and raw ids ("gpt-6-luna") alike
+
       const modelIn = body.model || "Luna";
       const modelName = MODEL_IDS[modelIn] ? modelIn
         : Object.keys(MODEL_IDS).find((k) => MODEL_IDS[k] === modelIn) || modelIn;
