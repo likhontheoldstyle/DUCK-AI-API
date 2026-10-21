@@ -111,8 +111,10 @@ export const MODEL_IDS = {
   "GPT-5.4 mini": "gpt-5.4-mini",
   "Claude Haiku": "claude-haiku-4-5",
   Mistral: "mistral-small-2603",
-  "gpt-oss": "tinfoil/gpt-oss-120b",
   Gemma: "tinfoil/gemma4-31b",
+  // NOTE: "gpt-oss" (tinfoil/gpt-oss-120b) is NOT supported — it is a
+  // Tinfoil privacy model needing an encrypted (public-key) flow, and the
+  // plain request is rejected with 400 ERR_BAD_REQUEST (verified live).
   Terra: "gpt-5.6-terra",
   "Claude Sonnet": "claude-sonnet-4-6",
 };
