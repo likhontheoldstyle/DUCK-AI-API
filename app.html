@@ -372,6 +372,95 @@
       .ai-body p:last-child { margin-bottom: 0; }
       .ai-body ul { margin: 4px 0 10px; padding-left: 20px; }
       .ai-body li { margin: 3px 0; }
+      .code-card {
+        margin: 10px 0;
+        background: #020617;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .code-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        background: rgba(255, 255, 255, 0.04);
+        border-bottom: 1px solid var(--line);
+      }
+      .code-dots { display: inline-flex; gap: 6px; flex: 0 0 auto; }
+      .code-dots i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+      .code-dots i:nth-child(1) { background: #f87171; }
+      .code-dots i:nth-child(2) { background: #fbbf24; }
+      .code-dots i:nth-child(3) { background: #22c55e; }
+      .code-lang { font-size: 12px; font-weight: 700; color: var(--cyan); letter-spacing: 0.04em; }
+      .code-actions { margin-left: auto; display: inline-flex; gap: 6px; }
+      .code-btn {
+        font-size: 11.5px;
+        font-weight: 700;
+        color: var(--muted);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 4px 10px;
+      }
+      .code-btn:hover { color: var(--text-strong); border-color: var(--faint); }
+      .code-btn.run { color: var(--green); border-color: rgba(34, 197, 94, 0.45); }
+      .code-pre {
+        margin: 0;
+        padding: 13px 14px;
+        overflow-x: auto;
+        font-size: 13px;
+        line-height: 1.65;
+      }
+      .code-pre code { font-family: inherit; color: #e2e8f0; white-space: pre; }
+      .tok-kw { color: #c4b5fd; }
+      .tok-str { color: #86efac; }
+      .tok-com { color: #64748b; font-style: italic; }
+      .tok-num { color: #fca5a5; }
+      .tok-fn { color: #7dd3fc; }
+      .tok-tag { color: #f472b6; }
+      .code-output {
+        border-top: 1px dashed var(--line);
+        padding: 10px 14px;
+        font-size: 12.5px;
+        color: #a5f3fc;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 220px;
+        overflow-y: auto;
+      }
+      .code-output .out-label { color: var(--faint); font-weight: 700; font-size: 11px; letter-spacing: 0.08em; display: block; margin-bottom: 4px; }
+      .preview-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 90;
+        background: rgba(2, 6, 23, 0.82);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 18px;
+      }
+      .preview-modal.show { display: flex; }
+      .preview-box {
+        width: min(960px, 100%);
+        height: min(82vh, 900px);
+        background: #0b0f17;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .preview-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text-strong);
+      }
+      .preview-frame { flex: 1 1 auto; width: 100%; border: 0; background: #fff; }
 
       .msg-actions { margin-top: 9px; display: flex; gap: 4px; }
       .copy-btn {
@@ -808,6 +897,17 @@
       <footer>NIJHUM DUCK Ai · DUCK-AI-API demo · <span class="sig">N19H0M</span></footer>
     </div>
 
+    <div class="preview-modal" id="previewModal" role="dialog" aria-modal="true" aria-label="Code preview">
+      <div class="preview-box">
+        <div class="preview-head">
+          <span>▶ Preview</span>
+          <div class="spacer"></div>
+          <button class="code-btn" id="previewClose" type="button">✕ Close</button>
+        </div>
+        <iframe class="preview-frame" id="previewFrame" title="Code preview" sandbox="allow-scripts"></iframe>
+      </div>
+    </div>
+
     <script>
 (function () {
   "use strict";
@@ -911,24 +1011,191 @@
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
+  var LANG_NAMES = {
+    js: "JavaScript", javascript: "JavaScript", mjs: "JavaScript", ts: "TypeScript", typescript: "TypeScript",
+    py: "Python", python: "Python", html: "HTML", htm: "HTML", css: "CSS", json: "JSON",
+    bash: "Shell", sh: "Shell", shell: "Shell", zsh: "Shell", java: "Java", c: "C", cpp: "C++", "c++": "C++",
+    cs: "C#", csharp: "C#", php: "PHP", rb: "Ruby", ruby: "Ruby", go: "Go", rs: "Rust", rust: "Rust",
+    sql: "SQL", swift: "Swift", kt: "Kotlin", kotlin: "Kotlin", dart: "Dart", lua: "Lua", r: "R",
+    xml: "XML", yml: "YAML", yaml: "YAML", md: "Markdown", text: "Text", txt: "Text", "": "Code"
+  };
+  var RUNNABLE = { html: true, htm: true, javascript: true, js: true, mjs: true, css: true };
+
+  function langLabel(raw) {
+    var key = String(raw || "").toLowerCase();
+    return LANG_NAMES[key] || (key ? key.charAt(0).toUpperCase() + key.slice(1) : "Code");
+  }
+
   function textToHtml(text) {
     var lines = String(text).split("\n");
     var html = "";
     var inList = false;
+    var inCode = false;
+    var codeLang = "";
+    var codeLines = [];
+    function closeList() { if (inList) { html += "</ul>"; inList = false; } }
+    function flushCode() {
+      var label = langLabel(codeLang);
+      var runnable = !!RUNNABLE[String(codeLang || "").toLowerCase()];
+      html += '<div class="code-card" data-lang="' + escapeHtml(codeLang || "") + '">'
+        + '<div class="code-head"><span class="code-dots" aria-hidden="true"><i></i><i></i><i></i></span>'
+        + '<span class="code-lang">' + escapeHtml(label) + '</span>'
+        + '<span class="code-actions">'
+        + (runnable ? '<button class="code-btn run" type="button" data-act="run">▶ Run</button>' : '')
+        + '<button class="code-btn" type="button" data-act="copy">Copy</button>'
+        + '</span></div>'
+        + '<pre class="code-pre"><code>' + escapeHtml(codeLines.join("\n")) + '</code></pre>'
+        + '<div class="code-output" hidden></div></div>';
+      codeLines = [];
+      codeLang = "";
+    }
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i];
       var trimmed = line.trim();
+      var fence = trimmed.match(/^```\s*([A-Za-z0-9#+._-]*)\s*$/);
+      if (fence) {
+        if (inCode) { flushCode(); inCode = false; }
+        else { closeList(); inCode = true; codeLang = fence[1] || ""; codeLines = []; }
+        continue;
+      }
+      if (inCode) { codeLines.push(line); continue; }
       if (trimmed.indexOf("- ") === 0 || trimmed.indexOf("• ") === 0 || /^\d+\.\s/.test(trimmed)) {
         if (!inList) { html += "<ul>"; inList = true; }
         html += "<li>" + escapeHtml(trimmed.replace(/^(- |• |\d+\.\s)/, "")) + "</li>";
       } else {
-        if (inList) { html += "</ul>"; inList = false; }
+        closeList();
         if (trimmed !== "") html += "<p>" + escapeHtml(line) + "</p>";
       }
     }
-    if (inList) html += "</ul>";
+    if (inCode) flushCode();
+    closeList();
     return html;
   }
+
+  var KEYWORDS = "const let var function return if else elif for while do switch case break continue class extends new try catch finally throw throws import from export default async await yield static void int float double char bool boolean string true false null nil None True False def print lambda in of is not and or with as pass public private protected fn mut pub struct impl enum match package func defer select type interface namespace using this self super typeof instanceof void cmd let mut ref out params event operator explicit implicit virtual override readonly sealed abstract internal protected internal set get add remove where when by lazy suspend inline crossinline noinline reified data sealed object companion init construct";
+
+  function highlightCode(code, lang) {
+    var kw = {};
+    KEYWORDS.split(" ").forEach(function (w) { kw[w] = true; });
+    var isHtml = lang === "html" || lang === "htm" || lang === "xml";
+    var re = /(\/\*[\s\S]*?\*\/|<!--[\s\S]*?-->|\/\/[^\n]*|#[^\n]*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|\b(\d+(?:\.\d+)?)\b|([A-Za-z_$][\w$]*)/g;
+    var out = "";
+    var last = 0;
+    var m;
+    while ((m = re.exec(code)) !== null) {
+      out += escapeHtml(code.slice(last, m.index));
+      if (m[1]) out += '<span class="tok-com">' + escapeHtml(m[1]) + '</span>';
+      else if (m[2]) out += '<span class="tok-str">' + escapeHtml(m[2]) + '</span>';
+      else if (m[3]) out += '<span class="tok-num">' + escapeHtml(m[3]) + '</span>';
+      else if (m[4]) {
+        var word = m[4];
+        var next = code.charAt(re.lastIndex);
+        if (isHtml && word) out += escapeHtml(word);
+        else if (kw[word]) out += '<span class="tok-kw">' + escapeHtml(word) + '</span>';
+        else if (next === "(") out += '<span class="tok-fn">' + escapeHtml(word) + '</span>';
+        else out += escapeHtml(word);
+      }
+      last = re.lastIndex;
+    }
+    out += escapeHtml(code.slice(last));
+    if (isHtml) {
+      out = out.replace(/(&lt;\/?)([a-zA-Z][\w-]*)/g, '$1<span class="tok-tag">$2</span>');
+    }
+    return out;
+  }
+
+  function copyCodeText(text, btn) {
+    function done() {
+      var old = btn.textContent;
+      btn.textContent = "Copied ✓";
+      setTimeout(function () { btn.textContent = old; }, 1400);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(function () { fallback(); });
+    } else { fallback(); }
+    function fallback() {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); done(); } catch (e) {}
+      ta.remove();
+    }
+  }
+
+  function openPreview(htmlDoc) {
+    var modal = document.getElementById("previewModal");
+    var frame = document.getElementById("previewFrame");
+    frame.srcdoc = htmlDoc;
+    modal.classList.add("show");
+  }
+
+  function runJavaScript(code, outEl) {
+    outEl.hidden = false;
+    outEl.innerHTML = '<span class="out-label">OUTPUT</span>Running…';
+    var iframe = document.createElement("iframe");
+    iframe.setAttribute("sandbox", "allow-scripts");
+    iframe.style.display = "none";
+    var finished = false;
+    function finish(lines) {
+      if (finished) return;
+      finished = true;
+      window.removeEventListener("message", onMsg);
+      if (iframe.parentNode) iframe.remove();
+      outEl.innerHTML = '<span class="out-label">OUTPUT</span>' + escapeHtml(lines.length ? lines.join("\n") : "(no output)");
+      scrollToBottom();
+    }
+    function onMsg(e) {
+      if (e.source !== iframe.contentWindow) return;
+      var d = e.data || {};
+      if (d.__nijhumRun) finish(Array.isArray(d.lines) ? d.lines : []);
+    }
+    window.addEventListener("message", onMsg);
+    var wrapped = '<script>'
+      + 'var __lines=[];'
+      + 'function __fmt(a){return Array.prototype.map.call(a,function(x){try{return typeof x==="object"?JSON.stringify(x):String(x);}catch(e){return String(x);}}).join(" ");}'
+      + 'console.log=function(){__lines.push(__fmt(arguments));};'
+      + 'console.error=function(){__lines.push("Error: "+__fmt(arguments));};'
+      + 'console.warn=function(){__lines.push(__fmt(arguments));};'
+      + 'window.onerror=function(m){__lines.push("Error: "+m);};'
+      + '<\/script><script>try{\n' + code.replace(/<\/script/gi, "<\\/script") + '\n}catch(e){__lines.push("Error: "+(e&&e.message||e));}'
+      + '<\/script><script>parent.postMessage({__nijhumRun:true,lines:__lines},"*");<\/script>';
+    iframe.srcdoc = wrapped;
+    document.body.appendChild(iframe);
+    setTimeout(function () { finish(["(timed out — no output)"]); }, 5000);
+  }
+
+  function enhanceCodeCards(root) {
+    var cards = root.querySelectorAll(".code-card");
+    cards.forEach(function (card) {
+      var lang = (card.getAttribute("data-lang") || "").toLowerCase();
+      var codeEl = card.querySelector("code");
+      var raw = codeEl.textContent;
+      codeEl.innerHTML = highlightCode(raw, lang);
+      var copyBtn = card.querySelector('[data-act="copy"]');
+      if (copyBtn) copyBtn.addEventListener("click", function () { copyCodeText(raw, copyBtn); });
+      var runBtn = card.querySelector('[data-act="run"]');
+      if (runBtn) runBtn.addEventListener("click", function () {
+        if (lang === "html" || lang === "htm") {
+          openPreview(raw);
+        } else if (lang === "css") {
+          openPreview('<!doctype html><html><head><style>' + raw + '</style></head><body><h1>Heading 1</h1><h2>Heading 2</h2><p>Sample paragraph with a <a href="#">link</a> and a <button>button</button>.</p><div class="box card container" style="margin-top:12px">Sample box (class: box / card / container)</div></body></html>');
+        } else {
+          runJavaScript(raw, card.querySelector(".code-output"));
+        }
+      });
+    });
+  }
+
+  var previewModal = document.getElementById("previewModal");
+  var previewClose = document.getElementById("previewClose");
+  function closePreview() {
+    previewModal.classList.remove("show");
+    document.getElementById("previewFrame").srcdoc = "";
+  }
+  if (previewClose) previewClose.addEventListener("click", closePreview);
+  if (previewModal) previewModal.addEventListener("click", function (e) { if (e.target === previewModal) closePreview(); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closePreview(); });
 
   function addAiMessage(text, modelName) {
     hideEmptyState();
@@ -936,6 +1203,7 @@
     var body = document.createElement("div");
     body.className = "ai-body";
     body.innerHTML = textToHtml(text);
+    enhanceCodeCards(body);
     wrap.appendChild(body);
     chat.appendChild(wrap);
     addCopyButton(wrap, text);
