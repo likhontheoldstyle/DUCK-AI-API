@@ -102,14 +102,21 @@ export async function getTransport() {
 // Model IDs scraped from duck.ai's own model list in its JS bundle
 // (2026-10-20). NOTE: Luna's id is "gpt-6-luna" — the older "gpt-5.6-luna"
 // id was replaced and the server rejects it with 400 ERR_BAD_REQUEST.
+// availableTo tiers scraped from the bundle's model list (2026-10-21).
+// Free tier: Luna, GPT-5.4 mini, Claude Haiku, Mistral, gpt-oss, Gemma.
+// Terra / Claude Sonnet / Sol / Opus need a paid DuckDuckGo subscription —
+// the server answers 404 ERR_MODEL_RESTRICTED for them on free accounts.
 export const MODEL_IDS = {
   Luna: "gpt-6-luna",
+  "GPT-5.4 mini": "gpt-5.4-mini",
+  "Claude Haiku": "claude-haiku-4-5",
+  Mistral: "mistral-small-2603",
+  "gpt-oss": "tinfoil/gpt-oss-120b",
+  Gemma: "tinfoil/gemma4-31b",
   Terra: "gpt-5.6-terra",
   "Claude Sonnet": "claude-sonnet-4-6",
-  "Claude Haiku": "claude-haiku-4-5",
-  "GPT-5.4 mini": "gpt-5.4-mini",
-  Mistral: "mistral-small-2603",
 };
+export const PAID_MODELS = ["Terra", "Claude Sonnet"];
 
 export function newJourneyId() {
   return crypto.randomBytes(16).toString("hex"); // frontend: x-ddg-journey-id
@@ -314,6 +321,13 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
   if (!res.ok) {
     let type = "";
     try { type = JSON.parse(text)?.type || ""; } catch {}
+    if (type === "ERR_MODEL_RESTRICTED") {
+      const err = new Error(`Model "${modelId}" is restricted: it needs a paid DuckDuckGo subscription. Free models: Luna, GPT-5.4 mini, Claude Haiku, Mistral, gpt-oss, Gemma.`);
+      err.code = "MODEL_RESTRICTED";
+      err.status = res.status;
+      err.type = type;
+      throw err;
+    }
     const err = new Error(`Phase 3 (chat) rejected: HTTP ${res.status}${type ? " " + type : ""} — ${text.slice(0, 200)}`);
     err.code = "CHAT_REJECTED";
     err.status = res.status;
