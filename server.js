@@ -1,4 +1,5 @@
 import http from "node:http";
+import fs from "node:fs";
 import { KNOWN_MODELS, sendUpstream } from "./src/duckClient.js";
 import { chatViaBrowser } from "./src/browserClient.js";
 import { chatViaScrape, scrapeVersions, getChallenge, newJourneyId, getTransport, MODEL_IDS, PROFILE, getLastRaw } from "./src/scrapeClient.js";
@@ -122,6 +123,7 @@ input,select,button{font-size:16px;padding:8px} #msg{width:70%}</style></head>
 <label><input type="checkbox" id="imgmode"> 🖼 Image</label>
 <button id="send">Send</button></p>
 <p style="color:#555">API endpoints: GET /health &nbsp; GET /models &nbsp; GET /scrape-status &nbsp; POST /chat &nbsp; POST /image</p>
+<p><a href="/app"><b>Open NIJHUM DUCK Ai</b></a> — the full chat page (chat, image generation and photo edit).</p>
 <script>
 const log=document.getElementById('log');
 async function send(){
@@ -171,8 +173,16 @@ $('b').onclick=async()=>{
 };
 </script></body></html>`;
 
+let APP_PAGE = "";
+try { APP_PAGE = fs.readFileSync(new URL("./app.html", import.meta.url), "utf8"); } catch {}
+
 const server = http.createServer(async (req, res) => {
   try {
+    if (req.method === "GET" && (req.url === "/app" || req.url.startsWith("/app?"))) {
+      if (!APP_PAGE) return json(res, 404, { error: "app.html missing" });
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      return res.end(APP_PAGE);
+    }
     if (req.method === "GET" && (req.url === "/" || req.url === "")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       return res.end(HOME_PAGE);
