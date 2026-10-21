@@ -223,7 +223,29 @@ export function parseSSERich(text) {
   }
   for (const m of out.matchAll(/!\[[^\]]*\]\((https?:[^)\s]+)\)/g)) pushImg(m[1]);
   for (const m of text.matchAll(/https?:[^\s"')]+?\.(?:png|jpe?g|webp)(?:\?[^\s"')]*)?/gi)) pushImg(m[0]);
-  return { text: out, images };
+  // Generated images may be referenced by id/URL without a file extension
+  for (const m of text.matchAll(/https?:[^\s"')]*duckchat[^\s"')]*\/(?:file|image|generated)[^\s"')]*/gi)) pushImg(m[0]);
+  for (const m of text.matchAll(/data:image\/[a-z]+;base64,[A-Za-z0-9+/=]{40,}/g)) pushImg(m[0].slice(0, 80) + "…(base64)");
+  return { text: out, images, eventShapes: summarizeEvents(text) };
+}
+
+// Compact map of what the stream actually contained — used to debug empty
+// replies (e.g. image generation) without dumping the whole stream.
+export function summarizeEvents(text) {
+  const shapes = new Map();
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    try {
+      const j = JSON.parse(data);
+      const partTypes = (Array.isArray(j.content) ? j.content : Array.isArray(j.parts) ? j.parts : [])
+        .map((x) => x?.type).filter(Boolean).join(",");
+      const key = [j.action || "", j.type || "", partTypes, Object.keys(j).slice(0, 6).join("+")].join("|");
+      shapes.set(key, (shapes.get(key) || 0) + 1);
+    } catch { shapes.set("non-json", (shapes.get("non-json") || 0) + 1); }
+  }
+  return [...shapes.entries()].map(([shape, count]) => ({ shape, count })).slice(0, 12);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -299,7 +321,8 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
     throw err;
   }
   const rich = parseSSERich(text);
-  return { model: modelId, reply: rich.text, images: rich.images, mode: "scrape" };
+  return { model: modelId, reply: rich.text, images: rich.images, mode: "scrape",
+           debug: { bytes: text.length, events: rich.eventShapes } };
 }
 
 export async function chatViaScrape({ message, messages, model, image = false }) {

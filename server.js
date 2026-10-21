@@ -153,7 +153,7 @@ const server = http.createServer(async (req, res) => {
       const model = body.model || process.env.DUCK_MODEL || "Luna";
       if (MODE !== "scrape") return json(res, 400, { error: "Image generation needs DUCK_MODE=scrape" });
       const out = await enqueueScrape({ message: prompt, model, image: true });
-      return json(res, 200, { model: out.model, prompt, images: out.images || [], reply: out.reply, mode: "scrape", variant: out.variant });
+      return json(res, 200, { model: out.model, prompt, images: out.images || [], reply: out.reply, mode: "scrape", variant: out.variant, debug: out.debug });
     }
     return json(res, 404, { error: "Not found. Try GET /health, GET /models, GET /scrape-status, POST /chat, POST /image" });
   } catch (e) {
