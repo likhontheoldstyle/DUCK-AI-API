@@ -1622,6 +1622,13 @@
         list.appendChild(li);
         stepsLog.push((ev.label || ev.tool || "Step") + " " + (ev.detail || ""));
         scrollToBottom();
+      } else if (ev.type === "note") {
+        var liN = document.createElement("li");
+        liN.className = "agent-result";
+        liN.textContent = "⏳ " + (ev.text || "");
+        list.appendChild(liN);
+        stepsLog.push("⏳ " + (ev.text || ""));
+        scrollToBottom();
       } else if (ev.type === "result") {
         var li2 = document.createElement("li");
         li2.className = "agent-result";
