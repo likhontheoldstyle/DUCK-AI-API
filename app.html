@@ -820,6 +820,7 @@
 
   var imageMode = false;
   var attachedFile = null;
+  var pendingEdit = null;
   var busy = false;
   var history = [];
   var items = [];
@@ -951,6 +952,20 @@
       fig.appendChild(cap);
     }
     body.appendChild(fig);
+    var editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "copy-btn";
+    editBtn.style.marginTop = "10px";
+    editBtn.textContent = "✏️ Edit this image";
+    editBtn.addEventListener("click", function () {
+      pendingEdit = src;
+      attachedFile = null;
+      attachName.textContent = "generated image (edit mode)";
+      attachPreview.classList.add("show");
+      input.focus();
+      input.scrollIntoView({ block: "nearest" });
+    });
+    body.appendChild(editBtn);
     wrap.appendChild(body);
     chat.appendChild(wrap);
     addCopyButton(wrap, src);
@@ -1020,6 +1035,7 @@
 
   function clearAttachment() {
     attachedFile = null;
+    pendingEdit = null;
     fileInput.value = "";
     attachPreview.classList.remove("show");
     attachName.textContent = "";
@@ -1203,10 +1219,11 @@
   function send() {
     var text = input.value.trim();
     if (busy) return;
-    if (!text && !attachedFile) return;
+    if (!text && !attachedFile && !pendingEdit) return;
     var modelName = currentModel();
     var file = attachedFile;
-    var fileName = file ? file.name : null;
+    var editSrc = pendingEdit;
+    var fileName = file ? file.name : editSrc ? "generated image" : null;
     if (!text) text = file ? "Edit this photo" : text;
     var wasImageMode = imageMode;
 
@@ -1218,7 +1235,7 @@
     busy = true;
     sendBtn.disabled = true;
 
-    var typing = showTyping(modelName, file ? "photo edit hocche… ektu somoy lagte pare" : wasImageMode ? "chhobi banacche… ektu somoy lagte pare" : "");
+    var typing = showTyping(modelName, (file || editSrc) ? "photo edit hocche… ektu somoy lagte pare" : wasImageMode ? "chhobi banacche… ektu somoy lagte pare" : "");
 
     function finish() {
       typing.remove();
@@ -1236,8 +1253,21 @@
       persist();
     }
 
-    if (file) {
-      fileToDataUrl(file).then(function (dataUrl) {
+    if (file || editSrc) {
+      var srcPromise = file ? fileToDataUrl(file) : new Promise(function (resolve, reject) {
+        var im = new Image();
+        im.onload = function () {
+          var scale = Math.min(1, 1024 / Math.max(im.width, im.height));
+          var cv = document.createElement("canvas");
+          cv.width = Math.round(im.width * scale);
+          cv.height = Math.round(im.height * scale);
+          cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height);
+          resolve(cv.toDataURL("image/png"));
+        };
+        im.onerror = reject;
+        im.src = editSrc;
+      });
+      srcPromise.then(function (dataUrl) {
         return api("/image-edit", { image: dataUrl, prompt: text, model: modelName });
       }).then(function (j) {
         typing.remove();
