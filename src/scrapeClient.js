@@ -118,6 +118,10 @@ export const MODEL_IDS = {
 };
 export const PAID_MODELS = ["Terra", "Claude Sonnet"];
 
+// Last raw upstream stream, kept for debugging (GET /debug-last)
+export let LAST_RAW = null;
+export function getLastRaw() { return LAST_RAW; }
+
 export function newJourneyId() {
   return crypto.randomBytes(16).toString("hex"); // frontend: x-ddg-journey-id
 }
@@ -344,6 +348,7 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
     err.type = type;
     throw err;
   }
+  LAST_RAW = { at: new Date().toISOString(), model: modelId, image: !!metadata?.toolChoice, variant: variant.name, text };
   const rich = parseSSERich(text);
   return { model: modelId, reply: rich.text, images: rich.images, mode: "scrape",
            debug: { bytes: text.length, events: rich.eventShapes } };

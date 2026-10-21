@@ -1,7 +1,7 @@
 import http from "node:http";
 import { KNOWN_MODELS, sendUpstream } from "./src/duckClient.js";
 import { chatViaBrowser } from "./src/browserClient.js";
-import { chatViaScrape, scrapeVersions, getChallenge, newJourneyId, getTransport, MODEL_IDS, PROFILE } from "./src/scrapeClient.js";
+import { chatViaScrape, scrapeVersions, getChallenge, newJourneyId, getTransport, MODEL_IDS, PROFILE, getLastRaw } from "./src/scrapeClient.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const MODE = process.env.DUCK_MODE || "scrape"; // scrape (default) | mock | browser | upstream
@@ -115,6 +115,12 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { models: MODEL_IDS, known: KNOWN_MODELS });
     }
     if (req.method === "GET" && req.url === "/capture") return json(res, 200, CAPTURED);
+    if (req.method === "GET" && req.url === "/debug-last") {
+      const raw = getLastRaw();
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+      if (!raw) return res.end("no request yet");
+      return res.end(`at=${raw.at} model=${raw.model} image=${raw.image} variant=${raw.variant} bytes=${raw.text.length}\n\n${raw.text.slice(0, 60000)}`);
+    }
     if (req.method === "GET" && req.url === "/scrape-status") {
       // Diagnostics: run Phase 1 + 2 live and show what was scraped (no chat sent)
       const fe = await scrapeVersions();
@@ -138,7 +144,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { model, reply, mode: MODE });
       }
       const out = await enqueueScrape({ message: text, model, image: isImage });
-      if (isImage) return json(res, 200, { model: out.model, prompt: text, images: out.images || [], reply: out.reply });
+      if (isImage) return json(res, 200, { model: out.model, prompt: text, images: out.images || [], reply: out.reply, debug: out.debug });
       return json(res, 200, { model: out.model, reply: out.reply, variant: out.variant });
     }
 
