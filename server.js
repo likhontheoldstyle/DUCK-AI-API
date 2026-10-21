@@ -29,7 +29,8 @@ function rememberImage(out) {
 }
 
 function enqueueScrape(args) {
-  const key = JSON.stringify([args.model, args.image ? 1 : 0, args.messages || args.message]);
+  const imgTag = args.imageData ? ":" + args.imageData.length + ":" + args.imageData.slice(-24) : "";
+  const key = JSON.stringify([args.model, args.image ? 1 : 0, (args.messages || args.message) + imgTag]);
   const hit = _cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return Promise.resolve({ ...hit.out, cached: true });
   const run = async () => {
@@ -64,7 +65,7 @@ function json(res, status, body) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let raw = "";
-    req.on("data", (c) => (raw += c));
+    req.on("data", (c) => { raw += c; if (raw.length > 16 * 1024 * 1024) req.destroy(); });
     req.on("end", () => {
       if (!raw) return resolve({});
       try { resolve(JSON.parse(raw)); } catch (e) { reject(e); }
@@ -106,6 +107,30 @@ async function send(){
 }
 document.getElementById('send').onclick=send;
 document.getElementById('msg').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+</script></body></html>`;
+
+const EDIT_PAGE = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Image Edit</title><style>body{font-family:system-ui;max-width:720px;margin:24px auto;padding:0 14px}input,textarea,button{width:100%;margin:8px 0;padding:10px;box-sizing:border-box}img{max-width:100%;border-radius:10px}</style></head>
+<body><h2>Edit an image</h2>
+<input type="file" id="f" accept="image/*">
+<textarea id="p" rows="3" placeholder="Describe the edit, e.g. make it a cartoon style"></textarea>
+<button id="b">Edit image</button>
+<p id="s"></p><img id="out"><p id="t" style="color:#555"></p>
+<script>
+const $=id=>document.getElementById(id);
+$('b').onclick=async()=>{
+  const file=$('f').files[0]; if(!file){$('s').textContent='Pick a photo first';return;}
+  if(!$('p').value.trim()){$('s').textContent='Write what edit you want';return;}
+  $('s').textContent='Working... this can take up to a minute';
+  const dataUrl=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(file);});
+  try{
+    const res=await fetch('/image-edit',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({image:dataUrl,prompt:$('p').value,model:'Luna'})});
+    const j=await res.json();
+    if(j.images&&j.images.length){$('out').src=j.images[0];$('t').textContent=(j.title||'')+' - '+(j.revised_prompt||'');$('s').textContent='Done. Long-press the image to save it.';}
+    else{$('s').textContent='No image returned: '+JSON.stringify(j).slice(0,300);}
+  }catch(e){$('s').textContent='Error: '+e.message;}
+};
 </script></body></html>`;
 
 const server = http.createServer(async (req, res) => {
@@ -274,6 +299,22 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         return res.end(`<h3>Error</h3><pre>${e.message}</pre>`);
       }
+    }
+
+    if (req.method === "POST" && req.url === "/image-edit") {
+      const body = await readBody(req);
+      if (!body.image) return json(res, 400, { error: "missing 'image' (base64 or data URI)" });
+      if (!body.prompt) return json(res, 400, { error: "missing 'prompt' (what edit to make)" });
+      if (MODE === "mock") return json(res, 200, { model: body.model || "Luna", images: [], mode: "mock" });
+      if (MODE !== "scrape") return json(res, 400, { error: "image edit requires DUCK_MODE=scrape" });
+      const out = await enqueueScrape({ message: body.prompt, model: body.model || "Luna", image: true, imageData: body.image, imageMime: body.mime });
+      rememberImage(out);
+      return json(res, 200, { model: out.model, prompt: body.prompt, images: out.images || [], title: out.title || undefined, revised_prompt: out.revised_prompt || undefined, reply: out.reply, mode: "scrape", variant: out.variant, debug: out.debug });
+    }
+
+    if (req.method === "GET" && (req.url === "/edit" || req.url.startsWith("/edit?"))) {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      return res.end(EDIT_PAGE);
     }
 
     if (req.method === "POST" && req.url === "/image") {      const body = await readBody(req);

@@ -313,16 +313,25 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
            debug: { bytes: text.length, events: rich.eventShapes } };
 }
 
-export async function chatViaScrape({ message, messages, model, image = false }) {
+export async function chatViaScrape({ message, messages, model, image = false, imageData, imageMime }) {
 
   const metadata = image ? { toolChoice: { GenerateImage: true } } : undefined;
   const fe = await scrapeVersions();
   const modelId = MODEL_IDS[model] || model || MODEL_IDS.Luna;
-  const msgs = (messages || [{ role: "user", content: message }]).map((m) =>
+  let msgs = (messages || [{ role: "user", content: message }]).map((m) =>
     typeof m.content === "string"
       ? { role: m.role || "user", content: [{ type: "text", text: m.content }] }
       : m
   );
+  if (imageData) {
+    const mime = imageMime || (imageData.startsWith("data:") ? imageData.slice(5, imageData.indexOf(";")) : "image/jpeg");
+    const uri = imageData.startsWith("data:") ? imageData : `data:${mime};base64,${imageData}`;
+    const text = typeof message === "string" && message ? message : "Edit this image";
+    msgs = [{ role: "user", content: [
+      { type: "image", mimeType: mime, image: uri },
+      { type: "text", text },
+    ] }];
+  }
 
   const retriesPerVariant = Math.max(1, Number(process.env.DUCK_RETRIES || 2));
   const variants = modelId === "tinfoil/gpt-oss-120b" ? OSS_VARIANTS : BODY_VARIANTS;
