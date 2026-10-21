@@ -429,6 +429,36 @@
         overflow-y: auto;
       }
       .code-output .out-label { color: var(--faint); font-weight: 700; font-size: 11px; letter-spacing: 0.08em; display: block; margin-bottom: 4px; }
+      .agent-card {
+        margin: 2px 0 4px;
+        background: #020617;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .agent-head {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 9px 13px;
+        background: rgba(255, 255, 255, 0.04);
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text-strong);
+      }
+      .agent-head .spinner {
+        width: 14px; height: 14px; flex: 0 0 auto;
+        border: 2px solid var(--line);
+        border-top-color: var(--cyan);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .agent-steps { margin: 0; padding: 10px 14px 12px 30px; font-size: 12.5px; color: var(--muted); }
+      .agent-steps li { margin: 5px 0; word-break: break-word; }
+      .agent-steps li b { color: var(--cyan); font-weight: 700; }
+      .agent-steps li.agent-result { list-style: none; margin-left: -16px; color: var(--faint); white-space: pre-wrap; }
       .preview-modal {
         position: fixed;
         inset: 0;
@@ -884,6 +914,11 @@
                 <span class="toggle-label">Image mode</span>
                 <span class="knob-dot" aria-hidden="true"></span>
               </button>
+              <button class="mode-toggle" id="agentToggle" type="button" aria-pressed="false">
+                <span aria-hidden="true">🤖</span>
+                <span class="toggle-label">Agent</span>
+                <span class="knob-dot" aria-hidden="true"></span>
+              </button>
               <span class="mode-hint" id="modeHint">Off — normal chat replies</span>
               <div class="spacer"></div>
               <button class="send-btn" id="sendBtn" type="submit" title="Send" aria-label="Send message">
@@ -919,6 +954,7 @@
   var modelSelect = document.getElementById("modelSelect");
   var modelId = document.getElementById("modelId");
   var imageToggle = document.getElementById("imageToggle");
+  var agentToggle = document.getElementById("agentToggle");
   var modeHint = document.getElementById("modeHint");
   var attachBtn = document.getElementById("attachBtn");
   var fileInput = document.getElementById("fileInput");
@@ -933,6 +969,7 @@
   var chatList = document.getElementById("chatList");
 
   var imageMode = false;
+  var agentMode = false;
   var attachedFile = null;
   var pendingEdit = null;
   var busy = false;
@@ -1304,12 +1341,39 @@
     input.style.height = Math.min(input.scrollHeight, 160) + "px";
   }
 
+  function updateModeHint() {
+    if (agentMode) {
+      modeHint.textContent = "On — agent step by step kaj korbe";
+      input.placeholder = "Ekta kaj daw — search, code run, file shoho kore dibo…";
+    } else if (imageMode) {
+      modeHint.textContent = "On — prompt diye chhobi banabe";
+      input.placeholder = "Kon chhobi banabo? prompt lekho…";
+    } else {
+      modeHint.textContent = "Off — normal chat replies";
+      input.placeholder = "Message NIJHUM DUCK Ai…";
+    }
+  }
   function setImageMode(on) {
     imageMode = !!on;
+    if (imageMode && agentMode) {
+      agentMode = false;
+      agentToggle.classList.remove("on");
+      agentToggle.setAttribute("aria-pressed", "false");
+    }
     imageToggle.classList.toggle("on", imageMode);
     imageToggle.setAttribute("aria-pressed", imageMode ? "true" : "false");
-    modeHint.textContent = imageMode ? "On — prompt diye chhobi banabe" : "Off — normal chat replies";
-    input.placeholder = imageMode ? "Kon chhobi banabo? prompt lekho…" : "Message NIJHUM DUCK Ai…";
+    updateModeHint();
+  }
+  function setAgentMode(on) {
+    agentMode = !!on;
+    if (agentMode && imageMode) {
+      imageMode = false;
+      imageToggle.classList.remove("on");
+      imageToggle.setAttribute("aria-pressed", "false");
+    }
+    agentToggle.classList.toggle("on", agentMode);
+    agentToggle.setAttribute("aria-pressed", agentMode ? "true" : "false");
+    updateModeHint();
   }
 
   function clearAttachment() {
@@ -1331,6 +1395,7 @@
   attachRemove.addEventListener("click", clearAttachment);
 
   imageToggle.addEventListener("click", function () { setImageMode(!imageMode); });
+  agentToggle.addEventListener("click", function () { setAgentMode(!agentMode); });
 
   modelSelect.addEventListener("change", function () {
     var opt = modelSelect.options[modelSelect.selectedIndex];
@@ -1391,6 +1456,7 @@
     items.forEach(function (it) {
       if (it.who === "user") addUserMessage(it.text, it.fileName || null);
       else if (it.img) addAiImage(it.img, it.title || "", it.caption || "", it.model);
+      else if (it.who === "agent") renderAgentSteps(it);
       else addAiMessage(it.text, it.model);
     });
   }
@@ -1471,6 +1537,142 @@
     chat.appendChild(empty);
   }
 
+  function renderAgentSteps(item) {
+    hideEmptyState();
+    var wrap = makeAiShell(item.model || currentModel());
+    var card = document.createElement("div");
+    card.className = "agent-card";
+    var head = document.createElement("div");
+    head.className = "agent-head";
+    head.textContent = "🤖 Agent steps";
+    var list = document.createElement("ol");
+    list.className = "agent-steps";
+    (item.steps || []).forEach(function (s) {
+      var li = document.createElement("li");
+      li.textContent = s;
+      list.appendChild(li);
+    });
+    card.appendChild(head);
+    card.appendChild(list);
+    wrap.appendChild(card);
+    chat.appendChild(wrap);
+    return wrap;
+  }
+
+  function runAgentFlow(task, modelName) {
+    hideEmptyState();
+    var wrap = makeAiShell(modelName);
+    var card = document.createElement("div");
+    card.className = "agent-card";
+    var head = document.createElement("div");
+    head.className = "agent-head";
+    var spin = document.createElement("span");
+    spin.className = "spinner";
+    var headText = document.createElement("span");
+    headText.textContent = "🤖 Agent working…";
+    head.appendChild(spin);
+    head.appendChild(headText);
+    var list = document.createElement("ol");
+    list.className = "agent-steps";
+    card.appendChild(head);
+    card.appendChild(list);
+    wrap.appendChild(card);
+    chat.appendChild(wrap);
+    scrollToBottom();
+
+    var stepsLog = [];
+    var done = false;
+
+    function finishAll(finalReply, imageObj, errText) {
+      if (done) return;
+      done = true;
+      spin.remove();
+      headText.textContent = errText ? "⚠️ Agent theme geche" : "✅ Agent kaj sesh";
+      busy = false;
+      sendBtn.disabled = false;
+      items.push({ who: "agent", steps: stepsLog, model: modelName });
+      if (errText) {
+        addAiMessage("Error: " + errText, modelName);
+        items.push({ who: "ai", text: "Error: " + errText, model: modelName });
+      }
+      if (imageObj && imageObj.src) {
+        addAiImage(imageObj.src, imageObj.title || "", imageObj.revised_prompt || "", modelName);
+        items.push({ who: "ai", img: imageObj.src, title: imageObj.title || "", caption: imageObj.revised_prompt || "", model: modelName });
+        setActiveImage(imageObj.src);
+      }
+      if (finalReply) {
+        addAiMessage(finalReply, modelName);
+        items.push({ who: "ai", text: finalReply, model: modelName });
+        history.push({ role: "user", content: task });
+        history.push({ role: "assistant", content: finalReply });
+      }
+      persist();
+      input.focus();
+    }
+
+    function handleEvent(ev) {
+      if (ev.type === "step") {
+        var li = document.createElement("li");
+        var b = document.createElement("b");
+        b.textContent = (ev.label || ev.tool || "Step") + " ";
+        var d = document.createElement("span");
+        d.textContent = ev.detail || "";
+        li.appendChild(b);
+        li.appendChild(d);
+        list.appendChild(li);
+        stepsLog.push((ev.label || ev.tool || "Step") + " " + (ev.detail || ""));
+        scrollToBottom();
+      } else if (ev.type === "result") {
+        var li2 = document.createElement("li");
+        li2.className = "agent-result";
+        li2.textContent = "↳ " + (ev.summary || "");
+        list.appendChild(li2);
+        scrollToBottom();
+      } else if (ev.type === "final") {
+        finishAll(ev.reply || "", ev.image || null, null);
+      } else if (ev.type === "error") {
+        finishAll("", null, ev.error || "unknown error");
+      }
+    }
+
+    function parseChunk(text) {
+      text.split("\n").forEach(function (line) {
+        line = line.trim();
+        if (line.indexOf("data:") === 0) {
+          try { handleEvent(JSON.parse(line.slice(5).trim())); } catch (e) {}
+        }
+      });
+    }
+
+    fetch("/agent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ task: task, model: modelName })
+    }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      if (!res.body || !res.body.getReader) {
+        return res.text().then(function (all) { all.split("\n\n").forEach(parseChunk); });
+      }
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var buf = "";
+      function pump() {
+        return reader.read().then(function (r) {
+          if (r.done) {
+            if (!done) finishAll("", null, "Stream bondho hoye geche — final answer ashe ni");
+            return;
+          }
+          buf += decoder.decode(r.value, { stream: true });
+          var parts = buf.split("\n\n");
+          buf = parts.pop();
+          parts.forEach(parseChunk);
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function (e) { finishAll("", null, e.message); });
+  }
+
   function setActiveImage(src) {
     pendingEdit = src;
     attachedFile = null;
@@ -1512,6 +1714,18 @@
     var fileName = file ? file.name : editSrc ? "generated image" : null;
     if (!text) text = file ? "Edit this photo" : text;
     var wasImageMode = imageMode;
+
+    if (agentMode && !file && !editSrc) {
+      addUserMessage(text, null);
+      items.push({ who: "user", text: text, fileName: null });
+      input.value = "";
+      autoGrow();
+      clearAttachment();
+      busy = true;
+      sendBtn.disabled = true;
+      runAgentFlow(text, modelName);
+      return;
+    }
 
     addUserMessage(text, fileName);
     items.push({ who: "user", text: text, fileName: fileName });
