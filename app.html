@@ -958,10 +958,7 @@
     editBtn.style.marginTop = "10px";
     editBtn.textContent = "✏️ Edit this image";
     editBtn.addEventListener("click", function () {
-      pendingEdit = src;
-      attachedFile = null;
-      attachName.textContent = "generated image (edit mode)";
-      attachPreview.classList.add("show");
+      setActiveImage(src);
       input.focus();
       input.scrollIntoView({ block: "nearest" });
     });
@@ -1192,6 +1189,13 @@
     chat.appendChild(empty);
   }
 
+  function setActiveImage(src) {
+    pendingEdit = src;
+    attachedFile = null;
+    attachName.textContent = "\uD83D\uDDBC current image — next message will edit it (tap \u2715 for normal chat)";
+    attachPreview.classList.add("show");
+  }
+
   function fileToDataUrl(file) {
     return createImageBitmap(file).then(function (bmp) {
       var scale = Math.min(1, 1024 / Math.max(bmp.width, bmp.height));
@@ -1275,6 +1279,7 @@
         if (src) {
           addAiImage(src, j.title || "", j.revised_prompt || "", modelName);
           items.push({ who: "ai", img: src, title: j.title || "", caption: j.revised_prompt || "", model: modelName });
+          setActiveImage(src);
         } else {
           addAiMessage(j.reply || "Chhobi ashe ni.", modelName);
           items.push({ who: "ai", text: j.reply || "Chhobi ashe ni.", model: modelName });
@@ -1293,6 +1298,7 @@
         if (src) {
           addAiImage(src, j.title || "", j.revised_prompt || "", modelName);
           items.push({ who: "ai", img: src, title: j.title || "", caption: j.revised_prompt || "", model: modelName });
+          setActiveImage(src);
         } else {
           addAiMessage(j.reply || "Chhobi ashe ni.", modelName);
           items.push({ who: "ai", text: j.reply || "Chhobi ashe ni.", model: modelName });
