@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { KNOWN_MODELS, sendUpstream } from "./src/duckClient.js";
 import { chatViaBrowser } from "./src/browserClient.js";
 import { chatViaScrape, scrapeVersions, getChallenge, newJourneyId, getTransport, MODEL_IDS, PROFILE, getLastRaw } from "./src/scrapeClient.js";
+import { runAgent } from "./src/agent.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const MODE = process.env.DUCK_MODE || "scrape";
@@ -36,7 +37,7 @@ function rememberImage(out) {
 
 function enqueueScrape(args) {
   const imgTag = args.imageData ? ":" + args.imageData.length + ":" + args.imageData.slice(-24) : "";
-  const key = JSON.stringify([args.model, args.image ? 1 : 0, (args.messages || args.message) + imgTag]);
+  const key = JSON.stringify([args.model, args.image ? 1 : 0, JSON.stringify(args.messages || args.message || "") + imgTag]);
   const hit = args.fresh ? null : _cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return Promise.resolve({ ...hit.out, cached: true });
   const run = async () => {
@@ -244,6 +245,47 @@ const server = http.createServer(async (req, res) => {
       if (isImage) rememberImage(out);
       if (isImage) return json(res, 200, imageShape({ model: out.model, prompt: text, out, extra: { debug: out.debug, ...(out.cached ? { cached: true } : {}) } }));
       return json(res, 200, chatShape({ model: out.model, reply: out.reply, extra: { ...(out.cached ? { cached: true } : {}) } }));
+    }
+
+    if (req.method === "POST" && req.url === "/agent") {
+      const body = await readBody(req);
+      const task = body.task || body.message;
+      if (!task) return json(res, 400, { error: 'Send {"task":"..."}' });
+      const model = body.model || process.env.DUCK_MODEL || "Luna";
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+      const sendEvent = (obj) => { try { res.write("data: " + JSON.stringify(obj) + "\n\n"); } catch {} };
+      let aborted = false;
+      res.on("close", () => { aborted = true; });
+      if (MODE === "mock") {
+        sendEvent({ type: "step", step: 1, tool: "web_search", label: "🔍 Search", detail: task });
+        await _sleep(400);
+        sendEvent({ type: "result", step: 1, tool: "web_search", summary: "Mock result for: " + task });
+        await _sleep(300);
+        sendEvent({ type: "final", reply: "[mock agent] Kaj sesh: " + task });
+        return res.end();
+      }
+      if (MODE !== "scrape") { sendEvent({ type: "error", error: "Agent mode needs DUCK_MODE=scrape" }); return res.end(); }
+      try {
+        await runAgent({
+          task,
+          model,
+          chatText: async (messages) => {
+            const out = await enqueueScrape({ message: task, messages, model, image: false, fresh: true });
+            return out.reply || "";
+          },
+          genImage: async (prompt, m) => {
+            const out = await enqueueScrape({ message: prompt, model: m || model, image: true, fresh: true });
+            rememberImage(out);
+            return out;
+          },
+          onEvent: sendEvent,
+          isAborted: () => aborted,
+          maxSteps: Math.max(1, Number(process.env.AGENT_MAX_STEPS || 8)),
+        });
+      } catch (e) {
+        sendEvent({ type: "error", error: e.message });
+      }
+      return res.end();
     }
 
     if (req.method === "POST" && req.url === "/chat") {
