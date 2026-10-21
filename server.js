@@ -16,6 +16,18 @@ let _queue = Promise.resolve();
 let _lastCallAt = 0;
 const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+let LAST_IMAGE = null;
+function rememberImage(out) {
+  const img = (out?.images || [])[0];
+  if (typeof img === "string" && img.startsWith("data:")) {
+    const comma = img.indexOf(",");
+    LAST_IMAGE = {
+      mime: img.slice(5, img.indexOf(";")) || "image/jpeg",
+      buf: Buffer.from(img.slice(comma + 1), "base64"),
+    };
+  }
+}
+
 function enqueueScrape(args) {
   const key = JSON.stringify([args.model, args.image ? 1 : 0, args.messages || args.message]);
   const hit = _cache.get(key);
@@ -137,6 +149,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { model, reply, mode: MODE });
       }
       const out = await enqueueScrape({ message: text, model, image: isImage });
+      if (isImage) rememberImage(out);
       if (isImage) return json(res, 200, { model: out.model, prompt: text, images: out.images || [], title: out.title || undefined, revised_prompt: out.revised_prompt || undefined, reply: out.reply, debug: out.debug });
       return json(res, 200, { model: out.model, reply: out.reply, variant: out.variant });
     }
@@ -225,6 +238,7 @@ const server = http.createServer(async (req, res) => {
       if (!body.prompt) return json(res, 400, { error: { message: 'Send {"prompt":"a cat in space"}', type: "invalid_request_error", code: null } });
       if (MODE !== "scrape") return json(res, 400, { error: { message: "Image generation needs DUCK_MODE=scrape", type: "invalid_request_error", code: null } });
       const out = await enqueueScrape({ message: body.prompt, model: body.model || "Luna", image: true });
+      rememberImage(out);
       return json(res, 200, {
         created: Math.floor(Date.now() / 1000),
         data: (out.images || []).map((img) => img.startsWith("data:")
@@ -233,12 +247,42 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    if (req.method === "GET" && req.url === "/last-image") {
+      if (!LAST_IMAGE) { res.writeHead(404, { "content-type": "text/plain" }); return res.end("No image generated yet. Use /image-view?prompt=... first."); }
+      res.writeHead(200, { "content-type": LAST_IMAGE.mime, "cache-control": "no-store" });
+      return res.end(LAST_IMAGE.buf);
+    }
+
+    if (req.method === "GET" && req.url.startsWith("/image-view")) {
+      const u = new URL(req.url, "http://localhost");
+      const prompt = u.searchParams.get("prompt") || u.searchParams.get("q") || "";
+      const model = u.searchParams.get("model") || "Luna";
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      if (!prompt) return res.end("<h3>Use: /image-view?prompt=a+cat+in+space</h3>");
+      if (MODE !== "scrape") return res.end("<h3>Image view needs DUCK_MODE=scrape</h3>");
+      try {
+        const out = await enqueueScrape({ message: prompt, model, image: true });
+        rememberImage(out);
+        const img = (out.images || [])[0];
+        if (!img) return res.end(`<h3>No image came back.</h3><pre>${JSON.stringify(out, null, 2).slice(0, 1000)}</pre>`);
+        return res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${out.title || prompt}</title><body style="font-family:system-ui;max-width:760px;margin:20px auto;padding:0 12px">
+<h3>${out.title || ""}</h3><p style="color:#555">${prompt}</p>
+<img src="${img}" style="max-width:100%;border-radius:10px">
+<p style="color:#555">${out.revised_prompt || ""}</p>
+<p><a href="/last-image">Open raw image</a> (long-press to save)</p></body>`);
+      } catch (e) {
+        return res.end(`<h3>Error</h3><pre>${e.message}</pre>`);
+      }
+    }
+
     if (req.method === "POST" && req.url === "/image") {      const body = await readBody(req);
       const prompt = body.prompt || body.message;
       if (!prompt) return json(res, 400, { error: 'Send {"prompt":"a cat in space"}' });
       const model = body.model || process.env.DUCK_MODEL || "Luna";
       if (MODE !== "scrape") return json(res, 400, { error: "Image generation needs DUCK_MODE=scrape" });
       const out = await enqueueScrape({ message: prompt, model, image: true });
+      rememberImage(out);
       return json(res, 200, { model: out.model, prompt, images: out.images || [], title: out.title || undefined, revised_prompt: out.revised_prompt || undefined, reply: out.reply, mode: "scrape", variant: out.variant, debug: out.debug });
     }
     return json(res, 404, { error: "Not found. Try GET /health, GET /models, GET /scrape-status, POST /chat, POST /image" });
