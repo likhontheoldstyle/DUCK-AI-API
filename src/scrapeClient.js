@@ -1,4 +1,25 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+
+let _systemPrompt = null;
+export function loadSystemPrompt() {
+  if (_systemPrompt !== null) return _systemPrompt;
+  if (process.env.DUCK_SYSTEM_PROMPT === "0") { _systemPrompt = ""; return _systemPrompt; }
+  try {
+    _systemPrompt = fs.readFileSync(new URL("../prompt.txt", import.meta.url), "utf8").trim();
+  } catch { _systemPrompt = ""; }
+  return _systemPrompt;
+}
+
+export function withSystemContext(messages) {
+  const prompt = loadSystemPrompt();
+  if (!prompt) return messages;
+  return [
+    { role: "user", content: prompt },
+    { role: "assistant", content: "Bujhchi. Ami NIJHUM — bolo ki korte hobe, kore dicchi." },
+    ...messages,
+  ];
+}
 
 const UA_WINDOWS =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36";
@@ -317,7 +338,8 @@ export async function chatViaScrape({ message, messages, model, image = false, i
   const metadata = image ? { toolChoice: { GenerateImage: true } } : undefined;
   const fe = await scrapeVersions();
   const modelId = MODEL_IDS[model] || model || MODEL_IDS.Luna;
-  const rawMsgs = messages || [{ role: "user", content: message }];
+  const baseMsgs = messages || [{ role: "user", content: message }];
+  const rawMsgs = (!image && !imageData) ? withSystemContext(baseMsgs) : baseMsgs;
   const hasAssistant = rawMsgs.some((m) => (m.role || "user") === "assistant");
   const buildMsgs = (style) => rawMsgs.map((m) => {
     if (typeof m.content !== "string") return m;

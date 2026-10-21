@@ -94,6 +94,8 @@ You can pass either the friendly name (`"Luna"`) or the raw model ID (`"gpt-6-lu
 
 > **About image generation and editing:** the chat models do not render images themselves. The chat model rewrites your prompt into a detailed one, then delegates the actual rendering to a dedicated image model (OpenAI's gpt-image, served through DuckDuckGo). Responses include the model's `title` and the `revised_prompt` it used.
 
+> **System prompt:** the server ships a built-in capability prompt in `prompt.txt` (project root). On every chat request it is prepended as context — the assistant works as NIJHUM, an expert all-rounder that completes tasks fully and fast. Edit the file and restart the server to change it; set `DUCK_SYSTEM_PROMPT=0` to disable it. It applies to chat only, not to image generation or editing.
+
 ---
 
 ## 📡 API Endpoints
