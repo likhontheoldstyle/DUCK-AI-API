@@ -18,6 +18,11 @@ let _lastCallAt = 0;
 const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let LAST_IMAGE = null;
+function mockImageData(prompt) {
+  const safe = String(prompt || "image").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2563eb"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs><rect width="1024" height="1024" fill="url(#g)"/><text x="512" y="470" font-family="monospace" font-size="44" font-weight="700" fill="#ffffff" text-anchor="middle">MOCK IMAGE</text><text x="512" y="535" font-family="monospace" font-size="25" fill="#e0f2fe" text-anchor="middle">${safe.slice(0, 64)}</text><text x="512" y="950" font-family="monospace" font-size="24" fill="#bfdbfe" text-anchor="middle">N19H0M</text></svg>`;
+  return "data:image/svg+xml;base64," + Buffer.from(svg).toString("base64");
+}
 function rememberImage(out) {
   const img = (out?.images || [])[0];
   if (typeof img === "string" && img.startsWith("data:")) {
@@ -32,7 +37,7 @@ function rememberImage(out) {
 function enqueueScrape(args) {
   const imgTag = args.imageData ? ":" + args.imageData.length + ":" + args.imageData.slice(-24) : "";
   const key = JSON.stringify([args.model, args.image ? 1 : 0, (args.messages || args.message) + imgTag]);
-  const hit = _cache.get(key);
+  const hit = args.fresh ? null : _cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return Promise.resolve({ ...hit.out, cached: true });
   const run = async () => {
     const gap = MIN_INTERVAL_MS - (Date.now() - _lastCallAt);
@@ -124,6 +129,7 @@ input,select,button{font-size:16px;padding:8px} #msg{width:70%}</style></head>
 <button id="send">Send</button></p>
 <p style="color:#555">API endpoints: GET /health &nbsp; GET /models &nbsp; GET /scrape-status &nbsp; POST /chat &nbsp; POST /image</p>
 <p><a href="/app"><b>Open NIJHUM DUCK Ai</b></a> — the full chat page (chat, image generation and photo edit).</p>
+<p><a href="/image-studio"><b>Open NIJHUM Image Studio</b></a> — the dedicated image generation page (prompt, style, preview, download, gallery and edit).</p>
 <script>
 const log=document.getElementById('log');
 async function send(){
@@ -175,6 +181,8 @@ $('b').onclick=async()=>{
 
 let APP_PAGE = "";
 try { APP_PAGE = fs.readFileSync(new URL("./app.html", import.meta.url), "utf8"); } catch {}
+let IMAGE_PAGE = "";
+try { IMAGE_PAGE = fs.readFileSync(new URL("./image.html", import.meta.url), "utf8"); } catch {}
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -182,6 +190,11 @@ const server = http.createServer(async (req, res) => {
       if (!APP_PAGE) return json(res, 404, { error: "app.html missing" });
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       return res.end(APP_PAGE);
+    }
+    if (req.method === "GET" && ["/image-studio", "/image-gen", "/studio"].some((p) => req.url === p || req.url.startsWith(p + "?"))) {
+      if (!IMAGE_PAGE) return json(res, 404, { error: "image.html missing" });
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      return res.end(IMAGE_PAGE);
     }
     if (req.method === "GET" && (req.url === "/" || req.url === "")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -218,10 +231,16 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: isImage ? "Use /image?prompt=a+cat+in+space" : "Use /chat?message=hi&model=Luna" });
       }
       if (MODE !== "scrape") {
+        if (isImage) {
+          if (MODE !== "mock") return json(res, 400, { error: "Image generation needs DUCK_MODE=scrape" });
+          const mockOut = { images: [mockImageData(text)], title: "Mock image", revised_prompt: text, reply: "" };
+          rememberImage(mockOut);
+          return json(res, 200, imageShape({ model, prompt: text, out: mockOut }));
+        }
         const reply = text.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${model}] You said: ${text}`;
         return json(res, 200, chatShape({ model, reply }));
       }
-      const out = await enqueueScrape({ message: text, model, image: isImage });
+      const out = await enqueueScrape({ message: text, model, image: isImage, fresh: u.searchParams.get("fresh") === "1" });
       if (isImage) rememberImage(out);
       if (isImage) return json(res, 200, imageShape({ model: out.model, prompt: text, out, extra: { debug: out.debug, ...(out.cached ? { cached: true } : {}) } }));
       return json(res, 200, chatShape({ model: out.model, reply: out.reply, extra: { ...(out.cached ? { cached: true } : {}) } }));
@@ -370,8 +389,13 @@ const server = http.createServer(async (req, res) => {
       const prompt = body.prompt || body.message;
       if (!prompt) return json(res, 400, { error: 'Send {"prompt":"a cat in space"}' });
       const model = body.model || process.env.DUCK_MODEL || "Luna";
+      if (MODE === "mock") {
+        const mockOut = { images: [mockImageData(prompt)], title: "Mock image", revised_prompt: prompt, reply: "" };
+        rememberImage(mockOut);
+        return json(res, 200, imageShape({ model, prompt, out: mockOut }));
+      }
       if (MODE !== "scrape") return json(res, 400, { error: "Image generation needs DUCK_MODE=scrape" });
-      const out = await enqueueScrape({ message: prompt, model, image: true });
+      const out = await enqueueScrape({ message: prompt, model, image: true, fresh: !!body.fresh });
       rememberImage(out);
       return json(res, 200, imageShape({ model: out.model, prompt, out, extra: { debug: out.debug } }));
     }

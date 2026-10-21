@@ -207,7 +207,6 @@ export function parseSSERich(text) {
   for (const m of text.matchAll(/https?:[^\s"')]+?\.(?:png|jpe?g|webp)(?:\?[^\s"')]*)?/gi)) pushImg(m[0]);
 
   for (const m of text.matchAll(/https?:[^\s"')]*duckchat[^\s"')]*\/(?:file|image|generated)[^\s"')]*/gi)) pushImg(m[0]);
-  for (const m of text.matchAll(/data:image\/[a-z]+;base64,[A-Za-z0-9+/=]{40,}/g)) pushImg(m[0].slice(0, 80) + "…(base64)");
   return { text: out, images, title, revisedPrompt, eventShapes: summarizeEvents(text) };
 }
 
