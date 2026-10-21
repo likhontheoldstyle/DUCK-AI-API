@@ -180,7 +180,7 @@ curl "http://localhost:3000/chat?message=Hello&model=Luna"
   ],
   "time": "2026-10-21T08:51:00.000Z",
   "author": "LIKHON AHMED",
-  "signature": "DUCK-AI-API by LIKHON AHMED"
+  "signature": "N19H0M"
 }
 ```
 

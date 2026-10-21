@@ -63,7 +63,7 @@ function json(res, status, body) {
   res.end(JSON.stringify(body, null, 2));
 }
 const AUTHOR = "LIKHON AHMED";
-const SIGNATURE = "DUCK-AI-API by LIKHON AHMED";
+const SIGNATURE = "N19H0M";
 function chatShape({ model, reply, extra = {} }) {
   return {
     status: true,
