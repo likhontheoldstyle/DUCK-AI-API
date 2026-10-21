@@ -112,9 +112,7 @@ export const MODEL_IDS = {
   "Claude Haiku": "claude-haiku-4-5",
   Mistral: "mistral-small-2603",
   Gemma: "tinfoil/gemma4-31b",
-  // NOTE: "gpt-oss" (tinfoil/gpt-oss-120b) is NOT supported — it is a
-  // Tinfoil privacy model needing an encrypted (public-key) flow, and the
-  // plain request is rejected with 400 ERR_BAD_REQUEST (verified live).
+  "gpt-oss": "tinfoil/gpt-oss-120b",
   Terra: "gpt-5.6-terra",
   "Claude Sonnet": "claude-sonnet-4-6",
 };
@@ -271,6 +269,16 @@ const BODY_VARIANTS = [
   { name: "v3-greeting", extra: { metadata: {}, reasoningEffort: "none", canShowGreeting: true } },
 ];
 
+// gpt-oss (tinfoil) differs from the other models in the bundle's config:
+// its only supported reasoning effort is "low", and for encrypted models
+// the frontend sends canUseWebSearch / canUploadFiles as null (no stored
+// preference) instead of true. Plain requests were rejected with 400.
+const OSS_VARIANTS = [
+  { name: "oss-low-null", extra: { metadata: {}, reasoningEffort: "low", canUseWebSearch: null, canUploadFiles: null } },
+  { name: "oss-low", extra: { metadata: {}, reasoningEffort: "low" } },
+  { name: "oss-low-nometa", extra: { reasoningEffort: "low", canUseWebSearch: null, canUploadFiles: null } },
+];
+
 async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
   const startedAt = Date.now();
   const journeyId = newJourneyId();
@@ -314,8 +322,8 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
       ...(variant.extra.reasoningEffort !== undefined ? { reasoningEffort: variant.extra.reasoningEffort } : {}),
       canUseApproxLocation: false,
       canDelegateImageGeneration: true,
-      canUseWebSearch: true,
-      canUploadFiles: true,
+      canUseWebSearch: variant.extra.canUseWebSearch ?? true,
+      canUploadFiles: variant.extra.canUploadFiles ?? true,
       canShowGreeting: variant.extra.canShowGreeting ?? false,
     }),
   });
@@ -358,8 +366,9 @@ export async function chatViaScrape({ message, messages, model, image = false })
   // variant: retry on 418 with a fresh journey + fresh challenge; on 400
   // move to the next variant; any success reports which variant worked.
   const retriesPerVariant = Math.max(1, Number(process.env.DUCK_RETRIES || 2));
+  const variants = modelId === "tinfoil/gpt-oss-120b" ? OSS_VARIANTS : BODY_VARIANTS;
   let lastErr;
-  for (const variant of BODY_VARIANTS) {
+  for (const variant of variants) {
     for (let attempt = 1; attempt <= retriesPerVariant; attempt++) {
       try {
         const out = await chatAttempt({ msgs, modelId, fe, variant, metadata });
