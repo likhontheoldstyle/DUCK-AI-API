@@ -65,6 +65,48 @@ function enqueueScrape(args) {
   return p;
 }
 
+function enqueueScrapeStream(args, onToken) {
+  const imgTag = args.imageData ? ":" + args.imageData.length + ":" + args.imageData.slice(-24) : "";
+  const key = JSON.stringify([args.model, args.image ? 1 : 0, JSON.stringify(args.messages || args.message || "") + imgTag]);
+  const hit = args.fresh ? null : _cache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
+    return (async () => {
+      const out = hit.out;
+      const reply = out.reply || "";
+      for (let i = 0; i < reply.length; i += 24) {
+        try { onToken(reply.slice(i, i + 24)); } catch {}
+        await _sleep(12);
+      }
+      return { ...out, cached: true };
+    })();
+  }
+  const run = async () => {
+    const gap = MIN_INTERVAL_MS - (Date.now() - _lastCallAt);
+    if (gap > 0) await _sleep(gap);
+    let emitted = 0;
+    const emit = (t) => { emitted += t.length; try { onToken(t); } catch {} };
+    try {
+      _lastCallAt = Date.now();
+      const out = await chatViaScrape({ ...args, onToken: emit });
+      _cache.set(key, { at: Date.now(), out });
+      return out;
+    } catch (e) {
+      if (e.status === 429 && emitted === 0 && WAIT_429_MS > 0) {
+        console.log(`[duck-ai-api] 429 rate limit — waiting ${Math.round(WAIT_429_MS / 1000)}s, then one retry`);
+        await _sleep(WAIT_429_MS);
+        _lastCallAt = Date.now();
+        const out = await chatViaScrape({ ...args, onToken: emit });
+        _cache.set(key, { at: Date.now(), out });
+        return out;
+      }
+      throw e;
+    }
+  };
+  const p = _queue.then(run, run);
+  _queue = p.catch(() => {});
+  return p;
+}
+
 function json(res, status, body) {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body, null, 2));
@@ -311,6 +353,46 @@ const server = http.createServer(async (req, res) => {
       }
       const reply = message.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${model}] You said: ${message}`;
       return json(res, 200, chatShape({ model, reply }));
+    }
+
+    if (req.method === "POST" && req.url === "/chat/stream") {
+      const body = await readBody(req);
+      const message = body.message || body.messages?.at(-1)?.content;
+      if (!message) return json(res, 400, { error: 'Send {"message":"hi"} or {"messages":[...]}' });
+      const model = body.model || process.env.DUCK_MODEL || "Luna";
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+      const sendEvent = (obj) => { try { res.write("data: " + JSON.stringify(obj) + "\n\n"); } catch {} };
+      if (MODE === "mock") {
+        const reply = message.trim().toLowerCase() === "hi" ? CAPTURED.response : `[mock:${model}] You said: ${message}`;
+        const words = reply.split(/(?<=\s)/);
+        for (const w of words) {
+          if (!w) continue;
+          sendEvent({ type: "token", text: w });
+          await _sleep(40);
+        }
+        sendEvent({ type: "done", result: chatShape({ model, reply }) });
+        return res.end();
+      }
+      if (MODE !== "scrape") {
+        sendEvent({ type: "error", error: "Streaming sudhu scrape mode-e chole" });
+        return res.end();
+      }
+      try {
+        const out = await enqueueScrapeStream(
+          { message, messages: body.messages, model, image: false },
+          (t) => sendEvent({ type: "token", text: t })
+        );
+        const extra = {
+          ...(out.cached ? { cached: true } : {}),
+          ...((out.images && out.images.length)
+            ? { images: out.images, title: out.title || undefined, revised_prompt: out.revised_prompt || undefined }
+            : {}),
+        };
+        sendEvent({ type: "done", result: chatShape({ model: out.model, reply: out.reply, extra }) });
+      } catch (e) {
+        sendEvent({ type: "error", error: e.message });
+      }
+      return res.end();
     }
 
     if (req.method === "GET" && req.url === "/v1/models") {

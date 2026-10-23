@@ -369,6 +369,9 @@
         overflow-wrap: anywhere;
       }
       .ai-body p { margin: 0 0 10px; }
+      .ai-body .stream-text { white-space: pre-wrap; word-break: break-word; }
+      .ai-body.streaming .stream-text::after { content: "▍"; color: #22d3ee; animation: streamBlink 0.9s steps(1) infinite; }
+      @keyframes streamBlink { 50% { opacity: 0; } }
       .ai-body p:last-child { margin-bottom: 0; }
       .ai-body ul { margin: 4px 0 10px; padding-left: 20px; }
       .ai-body li { margin: 3px 0; }
@@ -1711,6 +1714,125 @@
     });
   }
 
+  function streamChat(opts) {
+    var typing = opts.typing;
+    var modelName = opts.model;
+    var wrap = null;
+    var bodyEl = null;
+    var textEl = null;
+    var full = "";
+    var gotToken = false;
+    var settled = false;
+
+    function ensureBubble() {
+      if (wrap) return;
+      typing.remove();
+      wrap = makeAiShell(modelName);
+      bodyEl = document.createElement("div");
+      bodyEl.className = "ai-body streaming";
+      textEl = document.createElement("span");
+      textEl.className = "stream-text";
+      bodyEl.appendChild(textEl);
+      wrap.appendChild(bodyEl);
+      chat.appendChild(wrap);
+    }
+
+    function finalize(errText) {
+      ensureBubble();
+      bodyEl.classList.remove("streaming");
+      var shown = full + (errText ? "\n\n⚠️ " + errText : "");
+      bodyEl.innerHTML = textToHtml(shown);
+      enhanceCodeCards(bodyEl);
+      addCopyButton(wrap, full);
+      scrollToBottom();
+    }
+
+    function finishOk(result) {
+      if (settled) return;
+      settled = true;
+      var r = result || {};
+      if (typeof r.reply === "string" && r.reply) full = r.reply;
+      if (!wrap && !full) typing.remove();
+      else finalize(null);
+      opts.onDone(full, (r.images && r.images.length) ? r.images : null);
+    }
+
+    function finishErr(e) {
+      if (settled) return;
+      settled = true;
+      if (gotToken) {
+        finalize(e.message || "stream error");
+        opts.onDone(full, null);
+      } else {
+        opts.onFail(e);
+      }
+    }
+
+    function handleEvent(ev) {
+      if (ev.type === "token") {
+        gotToken = true;
+        ensureBubble();
+        full += ev.text || "";
+        textEl.textContent = full;
+        scrollToBottom();
+      } else if (ev.type === "done") {
+        finishOk(ev.result || {});
+      } else if (ev.type === "error") {
+        finishErr(new Error(ev.error || "stream error"));
+      }
+    }
+
+    function parseChunk(text) {
+      text.split("\n").forEach(function (line) {
+        line = line.trim();
+        if (line.indexOf("data:") === 0) {
+          try { handleEvent(JSON.parse(line.slice(5).trim())); } catch (e) {}
+        }
+      });
+    }
+
+    fetch("/chat/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ messages: opts.messages, model: modelName })
+    }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      if (!res.body || !res.body.getReader) {
+        return res.text().then(function (all) {
+          all.split("\n\n").forEach(parseChunk);
+          if (!settled) finishErr(new Error("Stream bondho hoye geche"));
+        });
+      }
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var buf = "";
+      function pump() {
+        return reader.read().then(function (r) {
+          if (r.done) {
+            if (!settled) finishErr(new Error("Stream bondho hoye geche — final answer ashe ni"));
+            return;
+          }
+          buf += decoder.decode(r.value, { stream: true });
+          var parts = buf.split("\n\n");
+          buf = parts.pop();
+          parts.forEach(parseChunk);
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function (e) {
+      if (settled) return;
+      if (gotToken) { finishErr(e); return; }
+      settled = true;
+      api("/chat", { messages: opts.messages, model: modelName }).then(function (j) {
+        typing.remove();
+        var reply = j.reply || "";
+        addAiMessage(reply, modelName);
+        opts.onDone(reply, (j.images && j.images.length) ? j.images : null);
+      }).catch(function (e2) { opts.onFail(e2); });
+    });
+  }
+
   function send() {
     var text = input.value.trim();
     if (busy) return;
@@ -1814,18 +1936,26 @@
     }
 
     history.push({ role: "user", content: text });
-    api("/chat", { messages: history.slice(), model: modelName }).then(function (j) {
-      typing.remove();
-      var reply = j.reply || "";
-      history.push({ role: "assistant", content: reply });
-      addAiMessage(reply, modelName);
-      items.push({ who: "ai", text: reply, model: modelName });
-      busy = false;
-      sendBtn.disabled = false;
-      persist();
-    }).catch(function (e) {
-      history.pop();
-      fail(e);
+    streamChat({
+      typing: typing,
+      model: modelName,
+      messages: history.slice(),
+      onDone: function (reply, images) {
+        history.push({ role: "assistant", content: reply });
+        items.push({ who: "ai", text: reply, model: modelName });
+        if (images && images.length) {
+          addAiImage(images[0], "", "", modelName);
+          items.push({ who: "ai", img: images[0], title: "", caption: "", model: modelName });
+          setActiveImage(images[0]);
+        }
+        busy = false;
+        sendBtn.disabled = false;
+        persist();
+      },
+      onFail: function (e) {
+        history.pop();
+        fail(e);
+      }
     });
   }
 

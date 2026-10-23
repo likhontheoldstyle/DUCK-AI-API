@@ -192,6 +192,47 @@ export function parseSSE(text) {
   return parseSSERich(text).text;
 }
 
+export function sseTextDelta(j) {
+  let delta = "";
+  if (typeof j.message === "string") delta += j.message;
+  const parts = Array.isArray(j.content) ? j.content : Array.isArray(j.parts) ? j.parts : [];
+  for (const part of parts) {
+    if (part && part.type === "text" && typeof part.text === "string") delta += part.text;
+  }
+  return delta;
+}
+
+export function makeStreamParser(onToken) {
+  let buf = "";
+  let full = "";
+  const handleLine = (line) => {
+    if (!line.startsWith("data:")) return;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") return;
+    try {
+      const delta = sseTextDelta(JSON.parse(data));
+      if (delta && onToken) onToken(delta);
+    } catch {}
+  };
+  return {
+    push(chunk) {
+      full += chunk;
+      buf += chunk;
+      let idx;
+      while ((idx = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, idx).replace(/\r$/, "");
+        buf = buf.slice(idx + 1);
+        handleLine(line);
+      }
+    },
+    end() {
+      if (buf.trim()) handleLine(buf.replace(/\r$/, ""));
+      buf = "";
+      return full;
+    },
+  };
+}
+
 export function parseSSERich(text) {
   let out = "";
   const images = [];
@@ -277,7 +318,7 @@ const OSS_VARIANTS = [
   { name: "oss-low-nometa", extra: { reasoningEffort: "low", canUseWebSearch: null, canUploadFiles: null } },
 ];
 
-async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
+async function chatAttempt({ msgs, modelId, fe, variant, metadata, onToken }) {
   const startedAt = Date.now();
   const journeyId = newJourneyId();
   const { jsa } = await getChallenge(fe, journeyId);
@@ -295,7 +336,7 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
   };
 
   const f = await getTransport();
-  let res, text;
+  let res;
   try {
     res = await f(`${ORIGIN}/duckchat/v1/chat`, {
       method: "POST",
@@ -325,11 +366,36 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
         canShowGreeting: variant.extra.canShowGreeting ?? false,
       }),
     });
-    text = await res.text();
   } catch (e) {
     const err = new Error(`Phase 3 network error: ${e.message || e}${e.cause?.code ? " (" + e.cause.code + ")" : ""}`);
     err.transport = true;
     throw err;
+  }
+  let text;
+  if (res.ok && onToken && res.body && typeof res.body.getReader === "function") {
+    try {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      const parser = makeStreamParser(onToken);
+      for (;;) {
+        const part = await reader.read();
+        if (part.done) break;
+        parser.push(decoder.decode(part.value, { stream: true }));
+      }
+      text = parser.end();
+    } catch (e) {
+      const err = new Error(`Phase 3 network error: ${e.message || e}${e.cause?.code ? " (" + e.cause.code + ")" : ""}`);
+      err.transport = true;
+      throw err;
+    }
+  } else {
+    try {
+      text = await res.text();
+    } catch (e) {
+      const err = new Error(`Phase 3 network error: ${e.message || e}${e.cause?.code ? " (" + e.cause.code + ")" : ""}`);
+      err.transport = true;
+      throw err;
+    }
   }
   if (!res.ok) {
     let type = "";
@@ -354,8 +420,10 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
            debug: { bytes: text.length, events: rich.eventShapes } };
 }
 
-export async function chatViaScrape({ message, messages, model, image = false, imageData, imageMime, systemContext = true }) {
+export async function chatViaScrape({ message, messages, model, image = false, imageData, imageMime, systemContext = true, onToken }) {
 
+  let emitted = 0;
+  const emit = onToken ? (t) => { emitted += t.length; try { onToken(t); } catch {} } : undefined;
   const metadata = image ? { toolChoice: { GenerateImage: true } } : undefined;
   let fe;
   try {
@@ -404,13 +472,14 @@ export async function chatViaScrape({ message, messages, model, image = false, i
       let netTries = 0;
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          const out = await chatAttempt({ msgs: [{ role: "user", content: step.parts }], modelId, fe, variant: step.variant, metadata });
+          const out = await chatAttempt({ msgs: [{ role: "user", content: step.parts }], modelId, fe, variant: step.variant, metadata, onToken: emit });
           console.log(`[duck-ai-api] ${step.name} attempt ${attempt} -> OK`);
           out.variant = step.name;
           return out;
         } catch (e) {
           lastErr = e;
           console.log(`[duck-ai-api] ${step.name} attempt ${attempt} -> ${e.status ? "HTTP " + e.status + " " + (e.type || "") : "NETWORK " + (e.message || e)}`);
+          if (emitted > 0) throw e;
           if (isTransportError(e) && netTries < 2) {
             netTries += 1;
             console.log(`[duck-ai-api] network error — ${3 * netTries}s pore abar try (${netTries}/2)`);
@@ -433,7 +502,7 @@ export async function chatViaScrape({ message, messages, model, image = false, i
       let netTries = 0;
       for (let attempt = 1; attempt <= retriesPerVariant; attempt++) {
         try {
-          const out = await chatAttempt({ msgs: msgsToUse, modelId, fe, variant, metadata });
+          const out = await chatAttempt({ msgs: msgsToUse, modelId, fe, variant, metadata, onToken: emit });
           console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> OK`);
           out.variant = variant.name;
           out.attempts = attempt;
@@ -441,6 +510,7 @@ export async function chatViaScrape({ message, messages, model, image = false, i
         } catch (e) {
           lastErr = e;
           console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> ${e.status ? "HTTP " + e.status + " " + (e.type || "") : "NETWORK " + (e.message || e)}`);
+          if (emitted > 0) throw e;
           if (e.status === 400) break;
           if (isTransportError(e) && netTries < 2) {
             netTries += 1;
