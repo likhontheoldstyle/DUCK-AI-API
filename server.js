@@ -111,6 +111,30 @@ function json(res, status, body) {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body, null, 2));
 }
+function isPrivateHost(host) {
+  const h = String(host || "").toLowerCase();
+  if (h === "localhost" || h.endsWith(".local")) return true;
+  if (h === "::1" || h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) return true;
+  const m = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!m) return false;
+  const a = Number(m[1]), b = Number(m[2]);
+  return a === 0 || a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || a >= 224;
+}
+async function fetchImageAsDataUrl(url) {
+  const u = new URL(url);
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("image URL must be http(s)");
+  if (isPrivateHost(u.hostname)) throw new Error("image URL host not allowed");
+  const r = await fetch(u, { redirect: "follow", signal: AbortSignal.timeout(20000), headers: { "user-agent": "Mozilla/5.0 (duck-ai-api image fetch)" } });
+  if (!r.ok) throw new Error(`image URL fetch failed: HTTP ${r.status}`);
+  const mime = (r.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+  if (!mime.startsWith("image/")) throw new Error(`image URL is not an image (${mime || "unknown type"})`);
+  const declared = Number(r.headers.get("content-length") || 0);
+  if (declared > 12 * 1024 * 1024) throw new Error("image too large (max 12 MB)");
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (buf.length > 12 * 1024 * 1024) throw new Error("image too large (max 12 MB)");
+  if (!buf.length) throw new Error("image URL returned empty body");
+  return `data:${mime};base64,${buf.toString("base64")}`;
+}
 const AUTHOR = "LIKHON AHMED";
 const SIGNATURE = "N19H0M";
 function chatShape({ model, reply, extra = {} }) {
@@ -229,6 +253,10 @@ try { IMAGE_PAGE = fs.readFileSync(new URL("./image.html", import.meta.url), "ut
 
 const server = http.createServer(async (req, res) => {
   try {
+    res.setHeader("access-control-allow-origin", "*");
+    res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+    res.setHeader("access-control-allow-headers", "content-type, authorization, x-api-key");
+    if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
     if (req.method === "GET" && (req.url === "/app" || req.url.startsWith("/app?"))) {
       if (!APP_PAGE) return json(res, 404, { error: "app.html missing" });
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
@@ -495,7 +523,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && req.url === "/image-edit") {
       const body = await readBody(req);
-      if (!body.image) return json(res, 400, { error: "missing 'image' (base64 or data URI)" });
+      if (!body.image) return json(res, 400, { error: "missing 'image' (data URI, base64, or an image URL)" });
+      if (typeof body.image === "string" && /^https?:\/\//i.test(body.image)) {
+        try { body.image = await fetchImageAsDataUrl(body.image); }
+        catch (e) { return json(res, 400, { error: `image URL failed: ${e.message}` }); }
+      }
       if (!body.prompt) return json(res, 400, { error: "missing 'prompt' (what edit to make)" });
       if (MODE === "mock") return json(res, 200, imageShape({ model: body.model || "Luna", prompt: body.prompt, out: { images: [] } }));
       if (MODE !== "scrape") return json(res, 400, { error: "image edit requires DUCK_MODE=scrape" });

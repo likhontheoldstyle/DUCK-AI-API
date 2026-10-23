@@ -124,7 +124,7 @@ You can pass either the friendly name (`"Luna"`) or the raw model ID (`"gpt-6-lu
 |---|---|---|
 | POST | `/chat` | Chat — `{ "message": "...", "model": "Luna" }`, or a `messages` array for multi-turn |
 | POST | `/image` | Image generation — `{ "prompt": "...", "model": "Luna" }`; add `"fresh": true` to bypass the 10-minute response cache and generate a new variation |
-| POST | `/image-edit` | Image editing — `{ "image": "data:image/png;base64,...", "prompt": "...", "model": "Luna" }` |
+| POST | `/image-edit` | Image editing — `{ "image": "<data URI \| base64 \| image URL>", "prompt": "...", "model": "Luna" }` |
 | POST | `/agent` | **Agent mode** — `{ "task": "...", "model": "Luna" }`; responds with an SSE stream (`step` / `result` / `image` / `final` / `error` events) while the agent works |
 
 ### 🤖 Agent mode
@@ -139,7 +139,7 @@ The chat page (/app) has an **Agent** toggle, and the API exposes it as `POST /a
 
 One tool call per step, up to `AGENT_MAX_STEPS` steps (default 8). The final answer arrives as a normal chat reply. Note that each step is one model request, so big tasks take a while and count against the anonymous rate limit.
 
-For `/image-edit`, `image` is a base64 string or a full data URI of the source photo (PNG or WebP recommended; large photos are best downscaled to about 1024 px on the longest side, like the official frontend does).
+For `/image-edit`, `image` is a base64 string or a full data URI of the source photo (PNG or WebP recommended; large photos are best downscaled to about 1024 px on the longest side, like the official frontend does). An http(s) **image URL** also works — the server downloads it for you (public URLs only, max 12 MB), which is handy for bots that receive media as links. All endpoints send CORS headers (`Access-Control-Allow-Origin: *`), so browser apps and web-based bots can call the API directly.
 
 ### OpenAI-compatible API
 
