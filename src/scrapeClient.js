@@ -250,42 +250,6 @@ export function summarizeEvents(text) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-let challengeUntil = 0;
-
-export function challengeWaitsMs() {
-  const list = (process.env.DUCK_418_WAITS_MS || "60000,120000")
-    .split(",").map((x) => parseInt(x, 10)).filter((x) => Number.isFinite(x) && x > 0);
-  return list.length ? list : [60000, 120000];
-}
-
-async function waitOutChallenge() {
-  const remain = challengeUntil - Date.now();
-  if (remain > 0) {
-    console.log(`[duck-ai-api] challenge cooldown cholche — aro ${Math.round(remain / 1000)}s wait`);
-    await sleep(remain);
-  }
-}
-
-export async function challengePolicy(runOnce, refresh) {
-  const waits = challengeWaitsMs();
-  let cycle = 0;
-  for (;;) {
-    await waitOutChallenge();
-    try {
-      const out = await runOnce();
-      challengeUntil = 0;
-      return out;
-    } catch (e) {
-      if (!e || e.status !== 418 || cycle >= waits.length) throw e;
-      const wait = waits[cycle] + Math.floor(Math.random() * Math.min(5000, waits[cycle] / 4));
-      cycle += 1;
-      challengeUntil = Date.now() + wait;
-      console.log(`[duck-ai-api] HTTP 418 ERR_CHALLENGE — ${Math.round(wait / 1000)}s cooldown, tarpor fresh session diye retry (${cycle}/${waits.length})`);
-      if (refresh) { try { await refresh(); } catch {} }
-    }
-  }
-}
-
 
 const BODY_VARIANTS = [
   { name: "v2-meta+reasoning", extra: { metadata: {}, reasoningEffort: "none" } },
@@ -372,7 +336,7 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
 export async function chatViaScrape({ message, messages, model, image = false, imageData, imageMime, systemContext = true }) {
 
   const metadata = image ? { toolChoice: { GenerateImage: true } } : undefined;
-  let fe = await scrapeVersions();
+  const fe = await scrapeVersions();
   const modelId = MODEL_IDS[model] || model || MODEL_IDS.Luna;
   const baseMsgs = messages || [{ role: "user", content: message }];
   const rawMsgs = (!image && !imageData && systemContext) ? withSystemContext(baseMsgs) : baseMsgs;
@@ -406,23 +370,23 @@ export async function chatViaScrape({ message, messages, model, image = false, i
       { name: "imgC-image-first-dataurl", variant: V2, parts: [imgPart(imgCtx.uri), { type: "text", text: imgCtx.text }] },
       { name: "imgD-text-first-rawb64", variant: V2, parts: [{ type: "text", text: imgCtx.text }, imgPart(imgCtx.raw)] },
     ];
-    async function runImgOnce() {
-      let lastErr;
-      for (const step of seq) {
+    let lastErr;
+    for (const step of seq) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           const out = await chatAttempt({ msgs: [{ role: "user", content: step.parts }], modelId, fe, variant: step.variant, metadata });
-          console.log(`[duck-ai-api] ${step.name} -> OK`);
+          console.log(`[duck-ai-api] ${step.name} attempt ${attempt} -> OK`);
           out.variant = step.name;
           return out;
         } catch (e) {
           lastErr = e;
-          console.log(`[duck-ai-api] ${step.name} -> HTTP ${e.status || "?"} ${e.type || ""}`);
-          if (e.status === 418) throw e;
+          console.log(`[duck-ai-api] ${step.name} attempt ${attempt} -> HTTP ${e.status || "?"} ${e.type || ""}`);
+          if (e.status === 418 && attempt < 2) { await sleep(1500); continue; }
+          break;
         }
       }
-      throw lastErr;
     }
-    return await challengePolicy(runImgOnce, async () => { fe = await scrapeVersions(); });
+    throw lastErr;
   }
 
   const retriesPerVariant = Math.max(1, Number(process.env.DUCK_RETRIES || 2));
@@ -440,20 +404,23 @@ export async function chatViaScrape({ message, messages, model, image = false, i
         } catch (e) {
           lastErr = e;
           console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> HTTP ${e.status || "?"} ${e.type || ""}`);
-          if (e.status === 418) throw e;
           if (e.status === 400) break;
-          throw e;
+          if (e.status !== 418 || attempt === retriesPerVariant) {
+            if (e.status !== 418) throw e;
+            break;
+          }
+          await sleep(1500 * attempt);
         }
       }
     }
     throw lastErr;
   }
   try {
-    return await challengePolicy(() => runWith(msgs), async () => { fe = await scrapeVersions(); });
+    return await runWith(msgs);
   } catch (e) {
     if (hasAssistant && e.status === 400) {
       console.log("[duck-ai-api] assistant-history shape A rejected, retrying with shape B");
-      return await challengePolicy(() => runWith(buildMsgs("legacy")), async () => { fe = await scrapeVersions(); });
+      return await runWith(buildMsgs("legacy"));
     }
     throw e;
   }
