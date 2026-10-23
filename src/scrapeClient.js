@@ -161,9 +161,16 @@ async function solveChallenge(challengeB64, fe) {
 
 export async function getChallenge(fe, journeyId) {
   const f = await getTransport();
-  const res = await f(`${ORIGIN}/duckchat/v1/status`, {
-    headers: { ...BASE_HEADERS, "cache-control": "no-store", "x-vqd-accept": "1", "x-ddg-journey-id": journeyId },
-  });
+  let res;
+  try {
+    res = await f(`${ORIGIN}/duckchat/v1/status`, {
+      headers: { ...BASE_HEADERS, "cache-control": "no-store", "x-vqd-accept": "1", "x-ddg-journey-id": journeyId },
+    });
+  } catch (e) {
+    const err = new Error(`Phase 2 network error: ${e.message || e}${e.cause?.code ? " (" + e.cause.code + ")" : ""}`);
+    err.transport = true;
+    throw err;
+  }
   if (!res.ok) throw new Error(`Phase 2 (status) failed: HTTP ${res.status}`);
   const body = await res.json().catch(() => ({}));
   const b64 = res.headers.get("x-vqd-hash-1");
@@ -250,6 +257,13 @@ export function summarizeEvents(text) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+export function isTransportError(e) {
+  if (!e || e.status) return false;
+  if (e.transport) return true;
+  const msg = `${e.message || ""} ${e.cause?.message || ""} ${e.cause?.code || ""}`;
+  return e.name === "TypeError" || /fetch failed|socket|ECONN|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|UND_ERR|other side closed|terminated|network/i.test(msg);
+}
+
 
 const BODY_VARIANTS = [
   { name: "v2-meta+reasoning", extra: { metadata: {}, reasoningEffort: "none" } },
@@ -281,35 +295,42 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
   };
 
   const f = await getTransport();
-  const res = await f(`${ORIGIN}/duckchat/v1/chat`, {
-    method: "POST",
-    headers: {
-      ...BASE_HEADERS,
-      "content-type": "application/json",
-      accept: "text/event-stream",
-      "x-duckai-continuation": "resubmit-context",
-      "x-duckai-consent-purposes": "user-location,image-generation,web-search",
-      "x-duckai-tool-approval": "web-search",
-      "x-duckai-response-id": crypto.randomUUID(),
-      "x-fe-version": fe.feVersion,
-      "x-fe-signals": Buffer.from(JSON.stringify(signals)).toString("base64"),
-      "x-vqd-hash-1": jsa,
-      "x-ddg-journey-id": journeyId,
-    },
-    body: JSON.stringify({
-      model: modelId,
-      ...((variant.extra.metadata !== undefined || metadata) ? { metadata: { ...(variant.extra.metadata || {}), ...(metadata || {}) } } : {}),
-      messages: msgs,
-      canUseTools: true,
-      ...(variant.extra.reasoningEffort !== undefined ? { reasoningEffort: variant.extra.reasoningEffort } : {}),
-      canUseApproxLocation: false,
-      canDelegateImageGeneration: true,
-      canUseWebSearch: variant.extra.canUseWebSearch ?? true,
-      canUploadFiles: variant.extra.canUploadFiles ?? true,
-      canShowGreeting: variant.extra.canShowGreeting ?? false,
-    }),
-  });
-  const text = await res.text();
+  let res, text;
+  try {
+    res = await f(`${ORIGIN}/duckchat/v1/chat`, {
+      method: "POST",
+      headers: {
+        ...BASE_HEADERS,
+        "content-type": "application/json",
+        accept: "text/event-stream",
+        "x-duckai-continuation": "resubmit-context",
+        "x-duckai-consent-purposes": "user-location,image-generation,web-search",
+        "x-duckai-tool-approval": "web-search",
+        "x-duckai-response-id": crypto.randomUUID(),
+        "x-fe-version": fe.feVersion,
+        "x-fe-signals": Buffer.from(JSON.stringify(signals)).toString("base64"),
+        "x-vqd-hash-1": jsa,
+        "x-ddg-journey-id": journeyId,
+      },
+      body: JSON.stringify({
+        model: modelId,
+        ...((variant.extra.metadata !== undefined || metadata) ? { metadata: { ...(variant.extra.metadata || {}), ...(metadata || {}) } } : {}),
+        messages: msgs,
+        canUseTools: true,
+        ...(variant.extra.reasoningEffort !== undefined ? { reasoningEffort: variant.extra.reasoningEffort } : {}),
+        canUseApproxLocation: false,
+        canDelegateImageGeneration: true,
+        canUseWebSearch: variant.extra.canUseWebSearch ?? true,
+        canUploadFiles: variant.extra.canUploadFiles ?? true,
+        canShowGreeting: variant.extra.canShowGreeting ?? false,
+      }),
+    });
+    text = await res.text();
+  } catch (e) {
+    const err = new Error(`Phase 3 network error: ${e.message || e}${e.cause?.code ? " (" + e.cause.code + ")" : ""}`);
+    err.transport = true;
+    throw err;
+  }
   if (!res.ok) {
     let type = "";
     try { type = JSON.parse(text)?.type || ""; } catch {}
@@ -336,7 +357,15 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata }) {
 export async function chatViaScrape({ message, messages, model, image = false, imageData, imageMime, systemContext = true }) {
 
   const metadata = image ? { toolChoice: { GenerateImage: true } } : undefined;
-  const fe = await scrapeVersions();
+  let fe;
+  try {
+    fe = await scrapeVersions();
+  } catch (e) {
+    if (!isTransportError(e)) throw e;
+    console.log("[duck-ai-api] Phase 1 network error — 3s pore abar try");
+    await sleep(3000);
+    fe = await scrapeVersions();
+  }
   const modelId = MODEL_IDS[model] || model || MODEL_IDS.Luna;
   const baseMsgs = messages || [{ role: "user", content: message }];
   const rawMsgs = (!image && !imageData && systemContext) ? withSystemContext(baseMsgs) : baseMsgs;
@@ -372,6 +401,7 @@ export async function chatViaScrape({ message, messages, model, image = false, i
     ];
     let lastErr;
     for (const step of seq) {
+      let netTries = 0;
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           const out = await chatAttempt({ msgs: [{ role: "user", content: step.parts }], modelId, fe, variant: step.variant, metadata });
@@ -380,7 +410,13 @@ export async function chatViaScrape({ message, messages, model, image = false, i
           return out;
         } catch (e) {
           lastErr = e;
-          console.log(`[duck-ai-api] ${step.name} attempt ${attempt} -> HTTP ${e.status || "?"} ${e.type || ""}`);
+          console.log(`[duck-ai-api] ${step.name} attempt ${attempt} -> ${e.status ? "HTTP " + e.status + " " + (e.type || "") : "NETWORK " + (e.message || e)}`);
+          if (isTransportError(e) && netTries < 2) {
+            netTries += 1;
+            console.log(`[duck-ai-api] network error — ${3 * netTries}s pore abar try (${netTries}/2)`);
+            await sleep(3000 * netTries);
+            continue;
+          }
           if (e.status === 418 && attempt < 2) { await sleep(1500); continue; }
           break;
         }
@@ -394,6 +430,7 @@ export async function chatViaScrape({ message, messages, model, image = false, i
   async function runWith(msgsToUse) {
     let lastErr;
     for (const variant of variants) {
+      let netTries = 0;
       for (let attempt = 1; attempt <= retriesPerVariant; attempt++) {
         try {
           const out = await chatAttempt({ msgs: msgsToUse, modelId, fe, variant, metadata });
@@ -403,8 +440,15 @@ export async function chatViaScrape({ message, messages, model, image = false, i
           return out;
         } catch (e) {
           lastErr = e;
-          console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> HTTP ${e.status || "?"} ${e.type || ""}`);
+          console.log(`[duck-ai-api] variant ${variant.name} attempt ${attempt} -> ${e.status ? "HTTP " + e.status + " " + (e.type || "") : "NETWORK " + (e.message || e)}`);
           if (e.status === 400) break;
+          if (isTransportError(e) && netTries < 2) {
+            netTries += 1;
+            attempt -= 1;
+            console.log(`[duck-ai-api] network error — ${3 * netTries}s pore abar try (${netTries}/2)`);
+            await sleep(3000 * netTries);
+            continue;
+          }
           if (e.status !== 418 || attempt === retriesPerVariant) {
             if (e.status !== 418) throw e;
             break;
