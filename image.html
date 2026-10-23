@@ -375,8 +375,8 @@
 
           <div class="field">
             <label for="promptInput">Prompt</label>
-            <textarea id="promptInput" maxlength="1000" placeholder="Example: A cat astronaut floating in space, cinematic light, ultra detailed"></textarea>
-            <div class="char-row"><span>Ctrl + Enter = generate</span><span id="charCount">0 / 1000</span></div>
+            <textarea id="promptInput" placeholder="Example: A cat astronaut floating in space, cinematic light, ultra detailed"></textarea>
+            <div class="char-row"><span>Ctrl + Enter = generate</span><span id="charCount">0 chars</span></div>
           </div>
 
           <div class="field">
@@ -530,7 +530,7 @@
     chipsBox.appendChild(b);
   });
 
-  function updateCount() { charCount.textContent = promptInput.value.length + " / 1000"; }
+  function updateCount() { charCount.textContent = promptInput.value.length + " chars"; }
   promptInput.addEventListener("input", updateCount);
   promptInput.addEventListener("keydown", function (e) {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); generate(); }
