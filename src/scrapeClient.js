@@ -238,6 +238,7 @@ export function parseSSERich(text) {
   const images = [];
   let title = null;
   let revisedPrompt = null;
+  let imageError = null;
   const b64Candidates = [];
   const pushImg = (v) => { if (typeof v === "string" && v && !images.includes(v)) images.push(v); };
   for (const line of text.split(/\r?\n/)) {
@@ -252,6 +253,7 @@ export function parseSSERich(text) {
       }
       if (j.role === "ui-component" && j.name === "generate-image" && j.data) {
         if (j.data.type === "image-title" && j.data.title) title = j.data.title;
+        if (j.data.status === "error" && j.data.message) imageError = j.data.message;
         if (typeof j.data.b64Image === "string" && j.data.b64Image.length > 100) b64Candidates.push(j.data.b64Image);
         if (typeof j.data.url === "string") pushImg(j.data.url);
       }
@@ -276,7 +278,7 @@ export function parseSSERich(text) {
   for (const m of text.matchAll(/https?:[^\s"')]+?\.(?:png|jpe?g|webp)(?:\?[^\s"')]*)?/gi)) pushImg(m[0]);
 
   for (const m of text.matchAll(/https?:[^\s"')]*duckchat[^\s"')]*\/(?:file|image|generated)[^\s"')]*/gi)) pushImg(m[0]);
-  return { text: out, images, title, revisedPrompt, eventShapes: summarizeEvents(text) };
+  return { text: out, images, title, revisedPrompt, imageError, eventShapes: summarizeEvents(text) };
 }
 
 export function summarizeEvents(text) {
@@ -416,8 +418,41 @@ async function chatAttempt({ msgs, modelId, fe, variant, metadata, onToken }) {
   LAST_RAW = { at: new Date().toISOString(), model: modelId, image: !!metadata?.toolChoice, variant: variant.name, text };
   const rich = parseSSERich(text);
   return { model: modelId, reply: rich.text, images: rich.images, title: rich.title,
-           revised_prompt: rich.revisedPrompt, mode: "scrape",
+           revised_prompt: rich.revisedPrompt, imageError: rich.imageError, mode: "scrape",
            debug: { bytes: text.length, events: rich.eventShapes } };
+}
+
+async function normalizeEditImage(uri, mime) {
+  if (mime !== "image/jpeg" && mime !== "image/jpg") return null;
+  const b64 = uri.slice(uri.indexOf(",") + 1);
+  const buf = Buffer.from(b64, "base64");
+  const jpegMod = await import("jpeg-js");
+  const jpeg = jpegMod.default || jpegMod;
+  const { PNG } = await import("pngjs");
+  const decoded = jpeg.decode(buf, { useTArray: true, maxMemoryUsageInMB: 512, maxResolutionInMP: 100 });
+  if (!decoded || !decoded.data) return null;
+  let width = decoded.width, height = decoded.height;
+  let data = decoded.data;
+  const MAXD = 1024;
+  if (Math.max(width, height) > MAXD) {
+    const scale = MAXD / Math.max(width, height);
+    const nw = Math.max(1, Math.round(width * scale));
+    const nh = Math.max(1, Math.round(height * scale));
+    const out = new Uint8Array(nw * nh * 4);
+    for (let y = 0; y < nh; y++) {
+      const sy = Math.min(height - 1, Math.floor(y / scale));
+      for (let x = 0; x < nw; x++) {
+        const sx = Math.min(width - 1, Math.floor(x / scale));
+        const si = (sy * width + sx) * 4, di = (y * nw + x) * 4;
+        out[di] = data[si]; out[di + 1] = data[si + 1]; out[di + 2] = data[si + 2]; out[di + 3] = data[si + 3];
+      }
+    }
+    width = nw; height = nh; data = out;
+  }
+  const png = new PNG({ width, height });
+  png.data = Buffer.from(data);
+  const pngBuf = PNG.sync.write(png);
+  return { uri: `data:image/png;base64,${pngBuf.toString("base64")}`, mime: "image/png" };
 }
 
 export async function chatViaScrape({ message, messages, model, image = false, imageData, imageMime, systemContext = true, onToken }) {
@@ -451,8 +486,12 @@ export async function chatViaScrape({ message, messages, model, image = false, i
   let msgs = buildMsgs("frontend");
   let imgCtx = null;
   if (imageData) {
-    const mime = imageMime || (imageData.startsWith("data:") ? imageData.slice(5, imageData.indexOf(";")) : "image/jpeg");
-    const uri = imageData.startsWith("data:") ? imageData : `data:${mime};base64,${imageData}`;
+    let mime = imageMime || (imageData.startsWith("data:") ? imageData.slice(5, imageData.indexOf(";")) : "image/jpeg");
+    let uri = imageData.startsWith("data:") ? imageData : `data:${mime};base64,${imageData}`;
+    try {
+      const conv = await normalizeEditImage(uri, mime);
+      if (conv) { uri = conv.uri; mime = conv.mime; }
+    } catch {}
     const raw = uri.slice(uri.indexOf(",") + 1);
     const text = typeof message === "string" && message ? message : "Edit this image";
     imgCtx = { mime, uri, raw, text };

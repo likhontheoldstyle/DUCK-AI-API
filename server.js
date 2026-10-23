@@ -182,8 +182,10 @@ function chatShape({ model, reply, extra = {} }) {
   };
 }
 function imageShape({ model, prompt, out, extra = {} }) {
+  const failed = !!(out.imageError && !(out.images || []).length);
   return {
-    status: true,
+    status: !failed,
+    ...(failed ? { error: `image generation failed: ${out.imageError}`, code: "IMAGE_GEN_FAILED" } : {}),
     id: "img-" + Math.random().toString(36).slice(2, 10),
     object: "image.result",
     model,
