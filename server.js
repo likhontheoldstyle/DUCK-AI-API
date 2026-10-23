@@ -1,5 +1,8 @@
 import http from "node:http";
 import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { execFile } from "node:child_process";
 import { KNOWN_MODELS, sendUpstream } from "./src/duckClient.js";
 import { chatViaBrowser } from "./src/browserClient.js";
 import { chatViaScrape, scrapeVersions, getChallenge, newJourneyId, getTransport, MODEL_IDS, PROFILE, getLastRaw } from "./src/scrapeClient.js";
@@ -7,6 +10,11 @@ import { runAgent } from "./src/agent.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const MODE = process.env.DUCK_MODE || "scrape";
+const STARTED_AT = Date.now();
+let PKG_VERSION = "";
+try { PKG_VERSION = JSON.parse(fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")).version || ""; } catch {}
+let ADMIN_KEY = process.env.ADMIN_KEY || "";
+try { if (!ADMIN_KEY) ADMIN_KEY = fs.readFileSync(new URL("./.admin-key", import.meta.url), "utf8").trim(); } catch {}
 
 const CAPTURED = { model: "Luna", message: "hi", response: "Hi! How can I help?" };
 
@@ -134,6 +142,28 @@ async function fetchImageAsDataUrl(url) {
   if (buf.length > 12 * 1024 * 1024) throw new Error("image too large (max 12 MB)");
   if (!buf.length) throw new Error("image URL returned empty body");
   return `data:${mime};base64,${buf.toString("base64")}`;
+}
+function adminKeyOk(req) {
+  if (!ADMIN_KEY) return false;
+  const given = String(req.headers["x-admin-key"] || "");
+  const a = Buffer.from(given), b = Buffer.from(ADMIN_KEY);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+function safeUpdatePath(rel) {
+  const raw = String(rel || "");
+  if (!raw || raw.includes("\\")) return null;
+  const parts = raw.split("/");
+  if (parts.some((p) => p === ".." || p === "." || p === "")) return null;
+  const clean = parts.join("/");
+  if (clean.includes("admin-key")) return null;
+  if (!/\.(js|json|html|txt|md)$/i.test(clean)) return null;
+  if (parts.length > 1 && !["src", "examples"].includes(parts[0])) return null;
+  return clean;
+}
+function checkSyntax(absPath) {
+  return new Promise((resolve) => {
+    execFile(process.execPath, ["--check", absPath], { timeout: 15000 }, (err) => resolve(!err));
+  });
 }
 const AUTHOR = "LIKHON AHMED";
 const SIGNATURE = "N19H0M";
@@ -272,7 +302,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(HOME_PAGE);
     }
     if (req.method === "GET" && req.url === "/health") {
-      return json(res, 200, { ok: true, mode: MODE, models: Object.keys(MODEL_IDS),
+      return json(res, 200, { ok: true, mode: MODE, version: PKG_VERSION, uptime_s: Math.floor((Date.now() - STARTED_AT) / 1000), models: Object.keys(MODEL_IDS),
         usage: 'POST /chat {"message":"hi","model":"Luna"}' });
     }
     if (req.method === "GET" && req.url === "/models") {
@@ -555,6 +585,56 @@ const server = http.createServer(async (req, res) => {
       rememberImage(out);
       return json(res, 200, imageShape({ model: out.model, prompt, out, extra: { debug: out.debug } }));
     }
+    if (req.method === "POST" && req.url === "/api/admin/update") {
+      if (!ADMIN_KEY) return json(res, 404, { error: "Not found. Try GET /health, GET /models, GET /scrape-status, POST /chat, POST /image" });
+      if (!adminKeyOk(req)) return json(res, 401, { error: "bad admin key" });
+      const body = await readBody(req);
+      const files = body.files && typeof body.files === "object" ? body.files : null;
+      if (!files || !Object.keys(files).length) return json(res, 400, { error: "missing 'files' ({path: content})" });
+      const root = new URL("./", import.meta.url).pathname;
+      const plan = [];
+      for (const [rel, content] of Object.entries(files)) {
+        const clean = safeUpdatePath(rel);
+        if (!clean) return json(res, 400, { error: `path not allowed: ${rel}` });
+        if (typeof content !== "string") return json(res, 400, { error: `content must be a string: ${rel}` });
+        if (Buffer.byteLength(content) > 2 * 1024 * 1024) return json(res, 400, { error: `file too large: ${rel}` });
+        if (clean.endsWith(".json")) { try { JSON.parse(content); } catch { return json(res, 400, { error: `invalid JSON: ${rel}` }); } }
+        plan.push({ rel: clean, content });
+      }
+      const staged = [];
+      try {
+        for (const f of plan) {
+          const tmpAbs = path.join(root, `.upd-${process.pid}-${Math.random().toString(36).slice(2)}-${path.basename(f.rel)}`);
+          fs.writeFileSync(tmpAbs, f.content);
+          staged.push({ ...f, tmpAbs });
+          if (f.rel.endsWith(".js") && !(await checkSyntax(tmpAbs))) throw new Error(`syntax check failed: ${f.rel}`);
+        }
+      } catch (e) {
+        for (const s of staged) { try { fs.rmSync(s.tmpAbs, { force: true }); } catch {} }
+        return json(res, 400, { error: e.message });
+      }
+      const updated = [];
+      for (const s of staged) {
+        const abs = path.join(root, s.rel);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        if (fs.existsSync(abs)) { try { fs.copyFileSync(abs, abs + ".bak"); } catch {} }
+        fs.renameSync(s.tmpAbs, abs);
+        updated.push(s.rel);
+      }
+      let installed = false;
+      if (updated.includes("package.json")) {
+        const npmOk = await new Promise((resolve) => {
+          execFile("npm", ["install", "--omit=optional", "--no-audit", "--no-fund"], { cwd: root, timeout: 240000 }, (err) => resolve(!err));
+        });
+        if (!npmOk) return json(res, 500, { status: false, updated, installed: false, error: "npm install failed — files updated but deps not installed; fix before restart", author: AUTHOR, signature: SIGNATURE });
+        installed = true;
+      }
+      const willRestart = body.restart !== false;
+      json(res, 200, { status: true, updated, installed, restarting: willRestart, author: AUTHOR, signature: SIGNATURE });
+      if (willRestart) setTimeout(() => process.exit(0), 600);
+      return;
+    }
+
     return json(res, 404, { error: "Not found. Try GET /health, GET /models, GET /scrape-status, POST /chat, POST /image" });
   } catch (e) {
     const status = ["PLAYWRIGHT_MISSING", "JSDOM_MISSING", "MISSING_UPSTREAM_HEADERS"].includes(e.code) ? 501

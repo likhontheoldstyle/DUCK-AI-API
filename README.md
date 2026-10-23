@@ -125,6 +125,7 @@ You can pass either the friendly name (`"Luna"`) or the raw model ID (`"gpt-6-lu
 | POST | `/chat` | Chat — `{ "message": "...", "model": "Luna" }`, or a `messages` array for multi-turn |
 | POST | `/image` | Image generation — `{ "prompt": "...", "model": "Luna" }`; add `"fresh": true` to bypass the 10-minute response cache and generate a new variation |
 | POST | `/image-edit` | Image editing — `{ "image": "<data URI \| base64 \| image URL>", "prompt": "...", "model": "Luna" }` |
+| POST | `/api/admin/update` | Self-update (needs `x-admin-key` header; key from `ADMIN_KEY` env or a server-side `.admin-key` file) — `{ "files": { "path": "content" }, "restart": true }`. Validates JS syntax, keeps a `.bak` of each replaced file, runs `npm install` when `package.json` changes, then restarts the process. |
 | POST | `/agent` | **Agent mode** — `{ "task": "...", "model": "Luna" }`; responds with an SSE stream (`step` / `result` / `image` / `final` / `error` events) while the agent works |
 
 ### 🤖 Agent mode
