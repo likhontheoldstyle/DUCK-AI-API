@@ -156,7 +156,7 @@ function safeUpdatePath(rel) {
   if (parts.some((p) => p === ".." || p === "." || p === "")) return null;
   const clean = parts.join("/");
   if (clean.includes("admin-key")) return null;
-  if (!/\.(js|json|html|txt|md)$/i.test(clean)) return null;
+  if (!/\.(mjs|cjs|js|json|html|txt|md)$/i.test(clean)) return null;
   if (parts.length > 1 && !["src", "examples"].includes(parts[0])) return null;
   return clean;
 }
@@ -607,7 +607,7 @@ const server = http.createServer(async (req, res) => {
           const tmpAbs = path.join(root, `.upd-${process.pid}-${Math.random().toString(36).slice(2)}-${path.basename(f.rel)}`);
           fs.writeFileSync(tmpAbs, f.content);
           staged.push({ ...f, tmpAbs });
-          if (f.rel.endsWith(".js") && !(await checkSyntax(tmpAbs))) throw new Error(`syntax check failed: ${f.rel}`);
+          if (/\.(mjs|cjs|js)$/i.test(f.rel) && !(await checkSyntax(tmpAbs))) throw new Error(`syntax check failed: ${f.rel}`);
         }
       } catch (e) {
         for (const s of staged) { try { fs.rmSync(s.tmpAbs, { force: true }); } catch {} }
